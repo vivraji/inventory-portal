@@ -290,3 +290,43 @@ image is tagged `inventory-portal-inventory:pre-mobile-layout`. Database/data/ph
 passed before deployment. Built-image checks and live read-only checks confirmed
 the responsive assets, form/API default of 1, inventory, SSE, and home-network
 access. Physical iPhone Safari verification remains a user device check.
+
+## Inventory numbers, similarity warnings and comparison (feature branch)
+
+`feat/similar-component-comparison` adds permanent, server-assigned inventory
+numbers such as `INV-000123`. They appear on cards, edit forms, search results,
+comparison views and CSV exports. Existing UUIDs remain unchanged. An additive
+SQLite ledger assigns numbers to existing entries in creation order during startup,
+then assigns numbers to new entries in their save transaction. Numbers remain
+stable after edits/restarts and are never reused after deletion; the ledger is
+included in the normal full `data/` backup. This feature is not deployed yet.
+
+When saving, possible matches show their inventory numbers, model, location, stock
+and a reason for the warning. Choose **Compare with draft**, **Keep editing**, or
+**Save separately anyway**. Comparison preserves the unsaved form and selected
+photos. The ordinary save checks matches before uploading new photos; the API also
+checks atomically before an unconfirmed insert/update so simultaneous duplicate
+requests cannot both save unnoticed. Identity changes on edits are checked while
+ordinary stock/location edits do not repeat duplicate warnings. No automatic merge
+or quantity change occurs. Changing the draft invalidates the prior confirmation.
+
+Select **Compare** on two catalog cards, then **Compare selected**, to view saved
+entries side by side. Different values are highlighted, with stock, storage,
+projects, manufacturer, part/model, price, datasheet, notes and front/back photos.
+Saved entries update when refreshed by SSE; removing a compared entry closes the
+comparison. Inventory-number search is available in the main search box.
+
+Matching is local and advisory: normalized part numbers, fuzzy/reordered names,
+electronics synonyms (for example MCU/microcontroller, thermal probe/temperature
+sensor, LED/light-emitting diode), and common resistor-value notation. It uses no
+paid AI calls, embeddings, new external services or photo matching. It cannot detect
+all semantic relationships, and related variants can legitimately be separate parts.
+Category alone does not trigger warnings; distinct explicit resistor values are
+kept separate. Review the numbered entries before deciding.
+
+API clients can use `POST /api/components/similar` for a read-only check, optionally
+with `?exclude_id=UUID`. Unconfirmed similar creates or identity-changing updates
+return HTTP 409 with `detail.code=similar_components` and up to five candidate
+records. After explicit user confirmation, retry the write with
+`?allow_similar=true`. Existing inventory-number labels cannot be assigned by clients.
+Applying the additive ledger migration to live data requires approved deployment.

@@ -6,6 +6,7 @@ const COMPONENT_LABELS = {name: 'Component name', category: 'Category', manufact
 
 function formatApiError(payload, status) {
     if (typeof payload?.detail === 'string') return payload.detail;
+    if (payload?.detail?.code === 'similar_components') return payload.detail.message;
     if (Array.isArray(payload?.detail)) {
         const messages = payload.detail.map(issue => {
             const path = Array.isArray(issue.loc) ? issue.loc.filter(p => p !== 'body') : [];

@@ -129,3 +129,19 @@ input[type=file]::file-selector-button{font:inherit;max-width:100%;min-height:44
     .top>.actions{width:100%}
     .top>.actions>.btn{flex:1 1 0}
 }
+
+.inventory-number{font-size:12px;color:#b2c7ff;font-weight:700;margin-bottom:8px}
+.compare-choice{display:flex;align-items:center;gap:8px;min-height:44px;margin-top:10px;font-size:14px}
+.compare-choice input{width:20px;height:20px;flex:0 0 20px}
+.similar-match{padding:12px 0;border-bottom:1px solid #445674;margin-bottom:12px}
+.similar-match p{margin:8px 0}
+.comparison-overlay{z-index:6}
+.comparison-modal{width:min(1000px,100%)}
+.comparison-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:14px;margin:16px 0}
+.comparison-table th,.comparison-table td{padding:10px 8px;border:1px solid #344863;text-align:left;vertical-align:top;overflow-wrap:anywhere;white-space:pre-wrap}
+.comparison-table th:first-child{width:26%}
+.comparison-table th{background:#1b2c46;font-size:12px}
+.comparison-different{background:#263652}
+.comparison-photos{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.comparison-photos img{width:100%;max-width:160px;height:100px;object-fit:contain;background:#101a2a;border-radius:6px}
+@media(max-width:480px){.comparison-table th,.comparison-table td{padding:8px 5px}.comparison-table{font-size:13px}}
