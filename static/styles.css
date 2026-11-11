@@ -40,7 +40,7 @@ p{color:#96a9c3;margin:6px 0 24px}
 .photo{height:155px;background:linear-gradient(135deg,#24334c,#182237);display:flex;align-items:center;justify-content:center;font-size:50px;color:#6b88ba}
 .photo img{flex:1;min-width:0;width:50%;height:100%;object-fit:cover}
 .details{padding:15px}
-.category{color:#88a8ff;text-transform:uppercase;font-size:10px;letter-spacing:.09em;font-weight:800}
+.category{color:#88a8ff;text-transform:none;font-size:11px;letter-spacing:.03em;font-weight:800}
 .name{font-size:16px;font-weight:700;margin:7px 0 5px;min-height:38px}
 .meta{font-size:12px;color:#9badc3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bottom{display:flex;justify-content:space-between;align-items:center;margin-top:17px}
@@ -145,3 +145,10 @@ input[type=file]::file-selector-button{font:inherit;max-width:100%;min-height:44
 .comparison-photos{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
 .comparison-photos img{width:100%;max-width:160px;height:100px;object-fit:contain;background:#101a2a;border-radius:6px}
 @media(max-width:480px){.comparison-table th,.comparison-table td{padding:8px 5px}.comparison-table{font-size:13px}}
+
+.similarity-links{margin-top:8px;border-top:1px solid #344863;padding-top:6px;min-width:0}
+.similarity-links summary{min-height:44px;cursor:pointer;color:#acc4ff;padding:10px 0;font-size:14px}
+.similarity-links ul{list-style:none;margin:0;padding:0}
+.similarity-links li{padding:8px 0;min-width:0;border-top:1px solid #344863}
+.similarity-links a{display:block;min-height:44px;padding:8px 0;color:#b2c7ff;overflow-wrap:anywhere}
+.similarity-links .btn{font-size:13px}

@@ -1,0 +1,8 @@
+[
+  {"record":{"name":"Ambient Sensor","notes":"Photoresistor module","vendor":"Amazon"},"queries":{"photo":true,"phoot":true,"phto":true,"amaz":true,"amzon":true,"photo amazon":true,"photo mouser":false}},
+  {"record":{"name":"Optical Detector","category":"Photo Sensor","manufacturer":"Acme"},"queries":{"photo":true,"phoot":true,"sensor":true,"sensro":true,"amazon":false}},
+  {"record":{"name":"Board","location":"Photo Drawer","project":"Camera Build","datasheet":"https://example.test/photodiode.pdf"},"queries":{"photo":true,"phoot":true,"camera":true,"drawre":true}},
+  {"record":{"name":"Power Regulator","category":"Power","vendor":"Digi-Key","quantity":24},"queries":{"photo":false,"phoot":false,"amaz":false,"24":true,"42":false,"power digi":true,"' OR 1=1 --":false}},
+  {"record":{"name":"Café Sensor","inventory_number":"INV-000123","model":"ABC-42"},"queries":{"cafe":true,"inv-000123":true,"abc":true,"abc-42":true,"":true}},
+  {"record":{"name":"Plain Board","image":"/uploads/photo.png","image_back":"/uploads/amazon.jpg"},"queries":{"photo":false,"amazon":false}}
+]

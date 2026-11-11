@@ -330,3 +330,42 @@ return HTTP 409 with `detail.code=similar_components` and up to five candidate
 records. After explicit user confirmation, retry the write with
 `?allow_similar=true`. Existing inventory-number labels cannot be assigned by clients.
 Applying the additive ledger migration to live data requires approved deployment.
+
+## Category consistency and search (feature branch; deployment pending)
+
+Category labels use readable Title Case, for example `Sensor Module`, with one
+space between words and consistent spacing around `/` and `&`. Common electronics
+acronyms such as USB, LEDs, ICs and I2C retain their usual form. Empty categories
+become `Other`. The API normalizes categories on create/update and AI identification;
+startup canonicalizes older stored labels without changing other fields or
+modification timestamps. Case/spacing variants collapse to one filter label,
+including an already-selected old spelling. Distinct descriptive subcategories
+are retained rather than merged by meaning.
+
+At the owner's request, stored category labels were cleaned up in a dedicated
+transaction after a consistent SQLite backup at
+`backups/category-cleanup-20261111T193322Z/inventory.db`. Verification confirmed that
+all non-category values, IDs, timestamps and photograph files were unchanged.
+No container was restarted. Refresh the current portal to see that cleanup;
+prevention of new inconsistent entries requires deployment of this branch.
+
+Search checks all textual/numeric record metadata, including notes/description,
+category, manufacturer, model, vendor, storage, project, datasheet and inventory
+number. It supports partial matches (`photo` finds `photoresistor`; `Amaz` finds
+vendor `Amazon`) and common typos (`phoot`, `phto`, `Amzon`). Multiword queries can
+match across fields; selected category/location filters still apply. Short queries
+and purely numeric values use exact/partial matching, while words of at least four
+characters allow one edit (two for longer words), including adjacent transpositions.
+Search runs locally, not through a paid AI service, and does not search photo pixels
+or internal upload paths. The browser and API share matching regression fixtures.
+
+## Linked similar items (feature branch; deployment pending)
+
+A `🔗 N similar` indicator appears on every card that has related entries. Expand
+it for links labeled with the other items' inventory numbers and names, plus a
+Compare action. Relationships are bidirectional, including more than five linked
+peers, and refresh after identity changes or deletion. Expanded lists stay open
+through background refreshes. Each link opens the other entry; links copied or
+opened in a new tab use `#component=UUID` to open that record after loading.
+The relationship map is cached while identities are unchanged and recalculated
+locally when necessary. No catalog data is sent to an AI service for these links.

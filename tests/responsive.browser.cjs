@@ -241,4 +241,49 @@ for (const [name,engine] of Object.entries({chromium,webkit})) {
             await new Promise(resolve=>fixture.server.close(resolve));
         }
     });
+
+    test(name + ': broad typo-tolerant search and reciprocal similarity links', async () => {
+        const fixture=await fixtureServer();let browser;
+        try{
+            browser=await engine.launch({headless:true});
+            const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+            const records=[
+                {...component,id:'one',inventory_number:'INV-000001',name:'Light Detector',category:'Sensor Module',model:'LD-1',notes:'Photoresistor module',vendor:'Amazon',location:'A'},
+                {...component,id:'two',inventory_number:'INV-000002',name:'Optical Detector',category:'Photo Sensor',model:'OD-2',notes:'Photodiode sensor',vendor:'Mouser',location:'B'},
+                {...component,id:'three',inventory_number:'INV-000003',name:'Voltage Regulator',category:'Power',model:'VR-24',notes:'Switching power supply',vendor:'Digi-Key',location:'C'}];
+            const links={one:[{id:'two',name:records[1].name,inventory_number:'INV-000002'}],
+                two:[{id:'one',name:records[0].name,inventory_number:'INV-000001'}],three:[]};
+            await page.route('**/api/**',route=>{
+                const endpoint=new URL(route.request().url()).pathname;
+                if(endpoint==='/api/events')return route.fulfill({contentType:'text/event-stream',body:'retry: 3000\n\n'});
+                return route.fulfill({json:endpoint==='/api/components'?records:endpoint==='/api/components/relationships'?links:
+                    {types:3,units:3,low_stock:3,categories:['Sensor Module','Photo Sensor','Power'],locations:['A','B','C']}});
+            });
+            await page.goto(fixture.url);await page.locator('.component').nth(2).waitFor();
+            assert.equal(await page.locator('.similarity-links').count(),2);
+            await page.locator('.similarity-links summary').nth(0).click();
+            const forward=page.locator('.similarity-links a[href="#component=two"]');
+            assert.match(await forward.innerText(),/INV-000002/);
+            await forward.click();await page.locator('#overlay').waitFor({state:'visible'});
+            assert.equal(await page.locator('#inventoryNumber').innerText(),'INV-000002');
+            await page.getByRole('button',{name:'Cancel',exact:true}).click();
+            await page.locator('.similarity-links summary').nth(1).click();
+            await page.locator('.similarity-links a[href="#component=one"]').click();
+            await page.locator('#overlay').waitFor({state:'visible'});
+            assert.equal(await page.locator('#inventoryNumber').innerText(),'INV-000001');
+            await page.getByRole('button',{name:'Cancel',exact:true}).click();
+            for(const [query,count] of [['photo',2],['phoot',2],['phto',2],['Amaz',1],['Amzon',1],['photo mouser',1]]){
+                await page.locator('#search').fill(query);
+                assert.equal(await page.locator('.component').count(),count,query);
+                await assertFits(page);
+            }
+            await page.goto(fixture.url+'/#component=two');
+            await page.locator('#overlay').waitFor({state:'visible'});
+            assert.equal(await page.locator('#inventoryNumber').innerText(),'INV-000002');
+            await assertFits(page,true);
+        }finally{
+            if(browser)await browser.close();
+            await new Promise(resolve=>fixture.server.close(resolve));
+        }
+    });
 }

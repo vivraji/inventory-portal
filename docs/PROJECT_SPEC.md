@@ -290,3 +290,24 @@ values. Preserve the open form and draft photos. Update saved comparison values
 on inventory refresh, and close comparison if an entry is deleted. Tests cover
 migration/number stability, search/export, duplicate confirmation, explicit distinct
 part values, concurrency, mobile comparison bounds and draft preservation.
+
+## Canonical categories, broad search and linked similarities — feature branch
+
+Normalize category casing and spacing at API writes, AI result validation and
+startup, preserving common electronics acronyms. Use labels such as `Sensor Module`
+with spaces. Preserve distinct functional subcategories and all non-category data.
+Filters must reconcile an old selected case variant with its canonical label rather
+than adding a second option. The owner-requested stored-label cleanup was backed
+up and verified independently; deploying the prevention code is still pending.
+
+Search all textual/numeric metadata, not only a subset of name/model fields.
+Support partial terms and bounded typo matching with transpositions, shared between
+browser/API regression fixtures. Preserve active category/storage filters; do not
+search uploaded image bytes or make paid AI calls for search.
+
+Show a linked similarity indicator on both ends of each detected relationship,
+listing peer names and inventory numbers with open/compare actions. Use stable UUID
+hash links so copied/new-tab links resolve to the peer entry. Preserve expanded
+related-item lists through SSE refresh and remove stale relationships on deletion.
+Cache the symmetric relationship map while identities are unchanged; do not cap
+one side differently from the other. Existing save-time heuristic limitations apply.
