@@ -1,0 +1,10 @@
+{
+  "name": "inventory-portal-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:layout": "node --test tests/responsive.browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

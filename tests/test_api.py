@@ -66,7 +66,7 @@ class ApiTests(unittest.TestCase):
     def test_crud_defaults_full_replacement_and_missing_records(self):
         created = self.create(notes='original', quantity=3, location='A')
         self.assertEqual(created['category'], 'Other')
-        self.assertEqual(created['min_quantity'], 0)
+        self.assertEqual(created['min_quantity'], 1)
         self.assertEqual(created['image'], '')
         self.assertTrue(created['id'])
         self.assertEqual(created['created_at'], created['updated_at'])
@@ -122,6 +122,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/stats').json(),
                          {'types': 4, 'units': 6, 'low_stock': 2,
                           'categories': ['Boards', 'Sensors'], 'locations': ['A', 'B']})
+
+    def test_default_low_stock_threshold_and_preserving_explicit_zero(self):
+        created = self.create(quantity=1)
+        self.assertEqual(created['min_quantity'], 1)
+        self.assertEqual(self.client.get('/api/stats').json()['low_stock'], 1)
+        disabled = self.create(quantity=0, min_quantity=0)
+        updated = self.client.put('/api/components/' + disabled['id'], json={'name':'Edited', 'quantity':0})
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()['min_quantity'], 0)
+        self.assertEqual(self.client.get('/api/stats').json()['low_stock'], 1)
 
     def test_upload_formats_size_boundary_and_retention(self):
         for kind, suffix in [('image/jpeg', '.jpg'), ('image/png', '.png'),

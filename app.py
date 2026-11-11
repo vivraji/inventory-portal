@@ -141,7 +141,7 @@ with db() as con:
       id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Other',
       manufacturer TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
       quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity >= 0),
-      min_quantity INTEGER NOT NULL DEFAULT 0 CHECK(min_quantity >= 0),
+      min_quantity INTEGER NOT NULL DEFAULT 1 CHECK(min_quantity >= 0),
       location TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '',
       vendor TEXT NOT NULL DEFAULT '', price REAL NOT NULL DEFAULT 0,
       datasheet TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
@@ -158,7 +158,7 @@ class Component(BaseModel):
     manufacturer: str = Field(default='', max_length=120)
     model: str = Field(default='', max_length=120)
     quantity: int = Field(default=1, ge=0)
-    min_quantity: int = Field(default=0, ge=0)
+    min_quantity: int = Field(default=1, ge=0)
     location: str = Field(default='', max_length=120)
     project: str = Field(default='', max_length=120)
     vendor: str = Field(default='', max_length=120)
@@ -243,9 +243,10 @@ def update_component(ident: str, component: Component):
     values = component.model_dump()
     with db() as con:
         old = get_component(con, ident)
-        # Older clients know only the front image; retain the back unless explicit.
-        if 'image_back' not in component.model_fields_set:
-            values['image_back'] = old['image_back']
+        # Preserve stored photo and threshold settings when older clients omit them.
+        for field in ['image_back', 'min_quantity']:
+            if field not in component.model_fields_set:
+                values[field] = old[field]
         con.execute('UPDATE components SET ' + ','.join(f'{k}=?' for k in FIELDS) + ',updated_at=? WHERE id=?', [values[k] for k in FIELDS] + [now(),ident])
         result = get_component(con, ident)
     events.publish()

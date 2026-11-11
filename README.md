@@ -93,7 +93,7 @@ HTTP and SSE smoke checks passed. No deployment is performed by the tests.
 
 ## Development tests
 
-Use Python 3.12+ and Node.js 18+ in a development environment:
+Use Python 3.12+ and Node.js 20+ in a development environment:
 
 ```sh
 python3 -m venv .venv
@@ -250,3 +250,33 @@ API suite. Read-only checks passed for the live UI, validation script, inventory
 API, SSE, private log routing and LAN access. No live AI identification was run
 for verification; logs are created on the next identification attempt. Further
 deployments and restores still require explicit owner approval.
+
+## Responsive layout checks (feature branch; deployment pending)
+
+The mobile-layout branch keeps the dashboard, forms, file controls, photo previews,
+long AI messages, error messages, and toasts inside the available viewport. Layouts
+use shrinkable grid/flex tracks and wrapping text instead of hiding horizontal
+overflow. The scrolling modal tracks `visualViewport` resize/scroll events so its
+bounds follow browser chrome, keyboard and zoom changes. iPhone safe-area insets
+are respected; form fields use 16px text and buttons have at least 44px height.
+Browser zoom remains enabled. Background scrolling is locked while a form is open.
+Styles are in `static/styles.css`; no frontend build step or runtime package is added.
+
+Optional browser regression tests use development-only Playwright with static
+fixtures, mocked API responses and no live inventory, keys or AI requests:
+
+```sh
+npm ci
+npx playwright install chromium webkit
+npm run test:layout
+```
+
+On Linux, use `npx playwright install --with-deps chromium webkit` to install the
+browsers and OS libraries, as CI does. Checks cover both engines at nine viewport
+sizes from 320px phones to desktop, open-form rotation, long metadata/status text,
+photo controls, reachable Save/Cancel actions, and simulated keyboard/zoom viewport
+changes. These engine tests do not replace a physical iPhone Safari check.
+
+The same pending update sets the default low-stock threshold to 1 for new records
+and forms; existing thresholds, including 0, are preserved. These changes require
+an approved deployment before they appear on the running portal.

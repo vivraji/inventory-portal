@@ -32,5 +32,11 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Browser synchronization tests
         run: node --test tests/*.test.cjs
+      - name: Install browser test dependencies
+        run: npm ci
+      - name: Install layout test browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Responsive layout tests
+        run: npm run test:layout
       - name: Check whitespace
         run: git diff --check
