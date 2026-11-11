@@ -108,6 +108,7 @@ test('background UI refresh preserves selected filters and unsaved form fields',
         fetch: async url => ({ok: true, json: async () => url === '/api/components' ? [] :
             {types: 2, units: 8, low_stock: 1, categories: ['New category'], locations: ['New bin']}})
     });
+    vm.runInContext(fs.readFileSync('static/photos.js','utf8'),context);
     vm.runInContext(inline + '\nrender=()=>{};toast=message=>{throw Error(message)};', context);
     await context.refreshInventory();
     assert.equal(nodes.categoryFilter.value, 'Old category');
@@ -119,6 +120,12 @@ test('background UI refresh preserves selected filters and unsaved form fields',
     assert.equal(nodes.overlay.className, 'overlay open');
     assert.equal(nodes.search.value, 'board');
     assert.equal(nodes.units.textContent, 8);
+    nodes.categoryFilter.value='sensor module';
+    context.fetch=async url=>({ok:true,json:async()=>url==='/api/components'?[]:
+        {types:0,units:0,low_stock:0,categories:['Sensor Module'],locations:[]}});
+    await context.refreshInventory();
+    assert.equal(nodes.categoryFilter.value,'Sensor Module');
+    assert.equal(nodes.categoryFilter.options.length,2); // All categories + one canonical label.
 });
 
 test('a failed read retries automatically without focus or another event', async () => {

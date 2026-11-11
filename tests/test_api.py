@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,7 +48,7 @@ class ApiTests(unittest.TestCase):
         self.mock_claude.return_value.__aenter__.return_value.post = self.claude_post
 
     def create(self, **fields):
-        response = self.client.post('/api/components', json={'name': 'Test board', **fields})
+        response = self.client.post('/api/components?allow_similar=true', json={'name': 'Test board', **fields})
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
@@ -278,6 +279,7 @@ class ApiTests(unittest.TestCase):
         photo.write_bytes(b'original photo')
         original = self.create(image='/uploads/existing.jpg', quantity=7)
         original.pop('image_back')
+        expected_number = original.pop('inventory_number')
         with closing(sqlite3.connect(self.module.DB)) as con:
             columns = [r for r in con.execute('PRAGMA table_info(components)') if r[1] != 'image_back']
         with closing(sqlite3.connect(legacy_root / 'data/inventory.db')) as con:
@@ -293,7 +295,7 @@ class ApiTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             with TestClient(module.app) as client:
-                self.assertEqual(client.get('/api/components').json(), [{**original, 'image_back': ''}])
+                self.assertEqual(client.get('/api/components').json(), [{**original, 'image_back': '', 'inventory_number': expected_number}])
             self.assertEqual(photo.read_bytes(), b'original photo')
 
     def mock_claude_response(self, text, status=200):
@@ -449,7 +451,7 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result['metadata_warnings'])
         for field, maximum in [('name',180), ('category',80), ('manufacturer',120), ('model',120)]:
             self.assertLessEqual(len(result[field]), maximum)
-            self.assertIn(original[field].strip(), result['notes'])
+            self.assertIn(self.module.normalize_category(original[field]) if field=='category' else original[field].strip(), result['notes'])
         # Exercise the actual save endpoint using the returned descriptive fields.
         saved = self.client.post('/api/components', json={key: result[key] for key in self.module.IDENTIFICATION_FIELDS})
         self.assertEqual(saved.status_code, 201, saved.text)
@@ -457,7 +459,8 @@ class ApiTests(unittest.TestCase):
 
     def test_ai_response_fills_unknown_fields_but_never_infers_inventory_quantities(self):
         result = self.module.identification_result('{"name":"Board","quantity":99,"location":"invented"}', 'claude', '')
-        for field in ['category','manufacturer','model','notes','uncertainty']:
+        self.assertEqual(result['category'], 'Other')
+        for field in ['manufacturer','model','notes','uncertainty']:
             self.assertEqual(result[field], '')
         self.assertEqual(result['confidence'], 'unknown')
         self.assertNotIn('quantity', result)
@@ -486,3 +489,132 @@ class ApiTests(unittest.TestCase):
         for field in self.module.IDENTIFICATION_FIELDS:
             maximum = self.module.Component.model_json_schema()['properties'][field]['maxLength']
             self.assertIn(str(maximum), schema['properties'][field]['description'])
+
+    def test_inventory_numbers_are_searchable_exported_and_never_reused(self):
+        first = self.create(name='First component')
+        second = self.create(name='Second component')
+        self.assertEqual(first['inventory_number'],'INV-000001')
+        self.assertEqual(second['inventory_number'],'INV-000002')
+        self.client.delete('/api/components/' + second['id'])
+        third = self.create(name='Third component',inventory_number='SPOOFED')
+        self.assertEqual(third['inventory_number'],'INV-000003')
+        rows = self.client.get('/api/components',params={'q':'INV-000001'}).json()
+        self.assertEqual([row['id'] for row in rows],[first['id']])
+        exported = list(csv.DictReader(io.StringIO(self.client.get('/api/export.csv').text)))
+        self.assertEqual({row['inventory_number'] for row in exported},{'INV-000001','INV-000003'})
+
+    def test_same_part_warning_requires_explicit_confirmation_without_mutating_stock(self):
+        existing = self.create(name='ESP32 development board',model='ESP32-S3',quantity=5)
+        draft = {'name':'Wireless MCU module','model':'ESP32 S3','quantity':2}
+        matches = self.client.post('/api/components/similar',json=draft).json()['matches']
+        self.assertEqual(matches[0]['inventory_number'],existing['inventory_number'])
+        response = self.client.post('/api/components',json=draft)
+        self.assertEqual(response.status_code,409)
+        self.assertEqual(response.json()['detail']['code'],'similar_components')
+        self.assertEqual(len(self.client.get('/api/components').json()),1)
+        confirmed = self.client.post('/api/components?allow_similar=true',json=draft)
+        self.assertEqual(confirmed.status_code,201)
+        self.assertEqual(confirmed.json()['inventory_number'],'INV-000002')
+        stored = {row['id']:row for row in self.client.get('/api/components').json()}
+        self.assertEqual(stored[existing['id']]['quantity'],5)
+        self.assertEqual(stored[confirmed.json()['id']]['quantity'],2)
+
+    def test_semantic_electronics_terms_and_distinct_values(self):
+        for left,right in [('Thermal probe','Temperature sensor'),('LED','Light-emitting diode'),
+                           ('ESP32 development board','ESP32 dev module'),('10k resistor','10000 ohm resistor'),
+                           ('Arduino Uno','Arduino Mega')]:
+            with self.subTest(left=left,right=right):
+                existing = self.create(name=left)
+                matches = self.client.post('/api/components/similar',json={'name':right}).json()['matches']
+                self.assertIn(existing['id'],[match['id'] for match in matches])
+                self.client.delete('/api/components/'+existing['id'])
+        self.create(name='10k resistor')
+        self.assertEqual(self.client.post('/api/components/similar',json={'name':'1k resistor'}).json()['matches'],[])
+        self.assertEqual(self.client.post('/api/components',json={'name':'1k resistor'}).status_code,201)
+
+    def test_similarity_excludes_self_and_does_not_block_ordinary_stock_edits(self):
+        first = self.create(name='Temperature sensor',quantity=1)
+        second = self.create(name='USB connector')
+        matches = self.client.post('/api/components/similar',params={'exclude_id':first['id']},
+                                   json={'name':'Temperature sensor'}).json()['matches']
+        self.assertEqual(matches,[])
+        updated = self.client.put('/api/components/'+first['id'],json={'name':'Temperature sensor','quantity':9})
+        self.assertEqual(updated.status_code,200)
+        self.assertEqual(updated.json()['inventory_number'],first['inventory_number'])
+        duplicate = self.client.put('/api/components/'+second['id'],json={'name':'Thermal probe'})
+        self.assertEqual(duplicate.status_code,409)
+        unchanged = next(row for row in self.client.get('/api/components').json() if row['id']==second['id'])
+        self.assertEqual(unchanged['name'],'USB connector')
+
+    def test_simultaneous_duplicate_saves_are_serialized(self):
+        def save():
+            return self.client.post('/api/components',json={'name':'ESP32 development board'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = list(pool.map(lambda _:save(),range(2)))
+        self.assertEqual(sorted(statuses),[201,409])
+        self.assertEqual(len(self.client.get('/api/components').json()),1)
+
+    def test_category_casing_is_consistent_for_manual_ai_and_filters(self):
+        first = self.create(category=' Sensor   module ')
+        second = self.create(category='SENSOR MODULE')
+        self.assertEqual(first['category'],'Sensor Module')
+        self.assertEqual(second['category'],'Sensor Module')
+        self.assertEqual(self.client.get('/api/stats').json()['categories'],['Sensor Module'])
+        filtered = self.client.get('/api/components',params={'category':'sensor module'}).json()
+        self.assertEqual(len(filtered),2)
+        for before,after in [('usb/led module (i2c)','USB / LED Module (I2C)'),
+                             ('ics & semiconductors','ICs & Semiconductors'),('  ','Other')]:
+            self.assertEqual(self.module.Component(name='Test',category=before).category,after)
+        response = self.module.identification_result('{"name":"Board","category":"sensor module"}','claude','')
+        self.assertEqual(response['category'],'Sensor Module')
+
+    def test_category_migration_changes_only_category_and_is_repeatable(self):
+        image = self.photo().json()['image']
+        records = [self.create(name='Legacy '+str(i),image=image) for i in range(3)]
+        with closing(sqlite3.connect(self.module.DB)) as con:
+            for record,label in zip(records,['Sensor Module','sensor module',' usb module ']):
+                con.execute('UPDATE components SET category=? WHERE id=?',(label,record['id']))
+            con.commit();con.row_factory=sqlite3.Row
+            before = {row['id']:dict(row) for row in con.execute('SELECT * FROM components')}
+        for _ in range(2):
+            spec = importlib.util.spec_from_file_location('normalized_api',self.root/'app.py')
+            module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            with closing(sqlite3.connect(module.DB)) as con:
+                con.row_factory=sqlite3.Row
+                after = {row['id']:dict(row) for row in con.execute('SELECT * FROM components')}
+            for ident,row in before.items():
+                self.assertEqual(after[ident]['category'],module.normalize_category(row['category']))
+                self.assertEqual({k:v for k,v in after[ident].items() if k!='category'},
+                                 {k:v for k,v in row.items() if k!='category'})
+        self.assertEqual((self.module.UPLOADS/Path(image).name).read_bytes(),b'fixture')
+
+    def test_similarity_relationships_are_bidirectional_and_refresh_after_delete(self):
+        records = [self.create(name='ESP32 development board',model='ESP32-S3') for _ in range(7)]
+        unrelated = self.create(name='USB connector',model='JST-PH')
+        links = self.client.get('/api/components/relationships').json()
+        for record in records:
+            self.assertEqual(len(links[record['id']]),6)
+            for target in links[record['id']]:
+                self.assertTrue(target['inventory_number'].startswith('INV-'))
+                self.assertIn(record['id'],[peer['id'] for peer in links[target['id']]])
+        self.assertEqual(links[unrelated['id']],[])
+        removed = records.pop()['id'];self.client.delete('/api/components/'+removed)
+        links = self.client.get('/api/components/relationships').json()
+        self.assertNotIn(removed,links)
+        self.assertTrue(all(removed not in [peer['id'] for peer in peers] for peers in links.values()))
+
+    def test_shared_search_contract_all_metadata_prefixes_and_typos(self):
+        cases=json.loads((ROOT/'tests/search-cases.json').read_text())
+        for case in cases:
+            for query,expected in case['queries'].items():
+                with self.subTest(record=case['record'],query=query):
+                    self.assertEqual(self.module.component_matches_search(case['record'],query),expected)
+
+    def test_api_search_finds_description_category_and_vendor_with_typos(self):
+        first=self.create(name='Ambient Detector',notes='Photoresistor module',vendor='Amazon')
+        second=self.create(name='Optical Detector',category='Photo Sensor',vendor='Mouser')
+        self.create(name='Voltage Regulator',category='Power',vendor='Digi-Key')
+        for query,expected in [('photo',{first['id'],second['id']}),('phoot',{first['id'],second['id']}),
+                               ('Amaz',{first['id']}),('Amzon',{first['id']}),('photo mouser',{second['id']})]:
+            with self.subTest(query=query):
+                self.assertEqual({row['id'] for row in self.client.get('/api/components',params={'q':query}).json()},expected)

@@ -4,8 +4,13 @@ const COMPONENT_LABELS = {name: 'Component name', category: 'Category', manufact
     model: 'Model / part number', location: 'Storage location', project: 'Project', vendor: 'Vendor',
     datasheet: 'Datasheet URL', notes: 'Notes', quantity: 'Quantity', min_quantity: 'Low-stock threshold', price: 'Unit price'};
 
+function categoryKey(value) {
+    return String(value||'').normalize('NFKC').toLowerCase().replace(/\s*([/&])\s*/g,' $1 ').replace(/\s+/g,' ').trim();
+}
+
 function formatApiError(payload, status) {
     if (typeof payload?.detail === 'string') return payload.detail;
+    if (payload?.detail?.code === 'similar_components') return payload.detail.message;
     if (Array.isArray(payload?.detail)) {
         const messages = payload.detail.map(issue => {
             const path = Array.isArray(issue.loc) ? issue.loc.filter(p => p !== 'body') : [];

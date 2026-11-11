@@ -9,6 +9,9 @@ import re
 import sqlite3
 import time
 import uuid
+import unicodedata
+from difflib import SequenceMatcher
+from functools import lru_cache
 from logging.handlers import RotatingFileHandler
 
 import httpx
@@ -20,7 +23,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parent
@@ -135,6 +138,21 @@ def db():
     finally:
         con.close()
 
+def normalize_category(value):
+    if not isinstance(value, str):
+        return value
+    value = unicodedata.normalize('NFKC', value)
+    value = re.sub(r'\s+', ' ', value).strip()
+    value = re.sub(r'\s*([/&])\s*', r' \1 ', value)
+    value = re.sub(r'\(\s+', '(', value)
+    value = re.sub(r'\s+\)', ')', value)
+    acronyms = {'ic':'IC','ics':'ICs','led':'LED','leds':'LEDs','lcd':'LCD','oled':'OLED',
+                'usb':'USB','pcb':'PCB','pcbs':'PCBs','mcu':'MCU','mcus':'MCUs','rf':'RF',
+                'dc':'DC','ac':'AC','i2c':'I2C','spi':'SPI','uart':'UART','wifi':'WiFi',
+                'iot':'IoT','smd':'SMD','gpio':'GPIO','gps':'GPS','ir':'IR','rtc':'RTC',
+                'can':'CAN','rs232':'RS232','rs485':'RS485','esp32':'ESP32','esp8266':'ESP8266','3d':'3D'}
+    return re.sub(r'[^\W_]+',lambda match:acronyms.get(match[0].casefold(),match[0].lower().capitalize()),value).strip() or 'Other'
+
 with db() as con:
     con.executescript('''
     CREATE TABLE IF NOT EXISTS components (
@@ -148,9 +166,21 @@ with db() as con:
       image TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     ''')
+    con.execute('BEGIN IMMEDIATE')
     # Additive, repeatable migration: existing image references and records survive.
     if 'image_back' not in {row['name'] for row in con.execute('PRAGMA table_info(components)')}:
         con.execute("ALTER TABLE components ADD COLUMN image_back TEXT NOT NULL DEFAULT ''")
+    # Keep this ledger after deletion so inventory numbers are never reused.
+    con.execute('CREATE TABLE IF NOT EXISTS inventory_numbers ('
+                'number INTEGER PRIMARY KEY AUTOINCREMENT, component_id TEXT NOT NULL UNIQUE)')
+    con.execute('INSERT INTO inventory_numbers (component_id) '
+                'SELECT c.id FROM components c WHERE NOT EXISTS '
+                '(SELECT 1 FROM inventory_numbers n WHERE n.component_id=c.id) '
+                'ORDER BY c.created_at,c.id')
+    for row in con.execute('SELECT DISTINCT category FROM components').fetchall():
+        canonical = normalize_category(row['category'])
+        if canonical != row['category']:
+            con.execute('UPDATE components SET category=? WHERE category=?',(canonical,row['category']))
 
 class Component(BaseModel):
     name: str = Field(min_length=1, max_length=180)
@@ -168,7 +198,14 @@ class Component(BaseModel):
     image: str = Field(default='', max_length=300)
     image_back: str = Field(default='', max_length=300)
 
+    @field_validator('category', mode='before')
+    @classmethod
+    def canonical_category(cls, value):
+        return normalize_category(value)
+
 FIELDS = list(Component.model_fields)
+COMPONENT_SELECT = ("SELECT c.*, printf('INV-%06d', n.number) AS inventory_number "
+                    'FROM components c JOIN inventory_numbers n ON n.component_id=c.id')
 IDENTIFICATION_FIELDS = ['name', 'category', 'manufacturer', 'model', 'notes']
 METADATA_PROPERTIES = {key: value for key, value in Component.model_json_schema()['properties'].items()
                        if key in IDENTIFICATION_FIELDS}
@@ -181,6 +218,7 @@ def identification_schema():
         properties[key] = {'type': 'string', 'description':
             f"Maximum {field['maxLength']} characters. " +
             ('Use a concise generic name if uncertain.' if key == 'name' else 'Use an empty string if unknown.')}
+    properties['category']['description'] += ' Use Title Case words with spaces, preserving acronyms like USB, ICs and LEDs.'
     properties['confidence'] = {'type': 'string', 'enum': ['high', 'medium', 'low', 'unknown']}
     properties['uncertainty'] = {'type': 'string', 'description': 'Explain uncertainty or missing evidence, at most 2000 characters.'}
     return {'type': 'object', 'properties': properties,
@@ -190,10 +228,151 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 def get_component(con, ident):
-    row = con.execute('SELECT * FROM components WHERE id=?', (ident,)).fetchone()
+    row = con.execute(COMPONENT_SELECT + ' WHERE c.id=?', (ident,)).fetchone()
     if not row:
         raise HTTPException(404, 'Component not found')
     return dict(row)
+
+def normalized_words(text):
+    text = unicodedata.normalize('NFKD', text.casefold().replace('ω', 'ohm'))
+    text = ''.join(c for c in text if not unicodedata.combining(c))
+    if 'resistor' in text:
+        def resistance(match):
+            value = float(match[1]) * (1000 if match[2] == 'k' else 1000000)
+            return str(int(value)) + 'ohm'
+        text = re.sub(r'\b(\d+(?:\.\d+)?)\s*([km])(?:ohms?)?\b',resistance,text)
+        text = re.sub(r'\b(\d+)\s*ohms?\b',r'\1ohm',text)
+    text = re.sub(r'light[\s-]+emitting[\s-]+diodes?', 'led', text)
+    text = re.sub(r'raspberry\s+pi', 'raspberrypi', text)
+    aliases = {'mcu':'microcontroller', 'microcontrollers':'microcontroller',
+               'dev':'development', 'devkit':'development', 'boards':'module', 'board':'module',
+               'breakout':'module', 'modules':'module', 'temp':'temperature', 'thermal':'temperature',
+               'heat':'temperature', 'probe':'sensor', 'sensors':'sensor', 'display':'screen',
+               'displays':'screen', 'resistors':'resistor', 'capacitors':'capacitor', 'leds':'led'}
+    stop = {'a','an','the','with','and','for','of','by','other','unknown','component'}
+    return {aliases.get(word, word) for word in re.findall(r'[a-z0-9]+',text) if word not in stop}
+
+def part_key(text):
+    return ''.join(re.findall(r'[a-z0-9]+',text.casefold()))
+
+def search_text(value):
+    return ''.join(c for c in unicodedata.normalize('NFKD',str(value).lower()) if not unicodedata.combining(c))
+
+def near_word(left, right, limit):
+    if abs(len(left)-len(right)) > limit:
+        return False
+    previous = list(range(len(right)+1)); earlier = None
+    for i,a in enumerate(left,1):
+        current = [i]
+        for j,b in enumerate(right,1):
+            cost = min(current[-1]+1,previous[j]+1,previous[j-1]+(a!=b))
+            if earlier is not None and i>1 and j>1 and a==right[j-2] and left[i-2]==b:
+                cost = min(cost,earlier[j-2]+1)
+            current.append(cost)
+        if min(current)>limit:
+            return False
+        earlier,previous = previous,current
+    return previous[-1]<=limit
+
+def component_matches_search(component, query):
+    text = search_text(' '.join(str(value) for key,value in component.items()
+                       if key not in {'image','image_back'} and isinstance(value,(str,int,float))))
+    query = search_text(query).strip()
+    if not query or query in text:
+        return True
+    if '=' in query or ';' in query:
+        return False
+    terms = re.findall(r'\w+',query)
+    if not terms:
+        return False
+    words = [word for word in re.findall(r'\w+',text) if len(word)<=100]
+    for term in terms:
+        if term in text:
+            continue
+        if len(term)<4 or len(term)>32 or term.isdigit():
+            return False
+        limit = 1 if len(term)<8 else 2
+        matched = False
+        for word in words:
+            for length in range(max(1,len(term)-limit),len(term)+limit+1):
+                if any(near_word(term,word[start:start+length],limit) for start in range(len(word)-length+1)):
+                    matched = True;break
+            if matched:
+                break
+        if not matched:
+            return False
+    return True
+
+def component_similarity(draft, existing):
+    left_model, right_model = part_key(draft['model']), part_key(existing['model'])
+    if left_model and left_model == right_model and len(left_model) >= 3 and left_model not in {'unknown','none','module','generic','na','sensor','board','other'}:
+        return 1.0, 'Same model / part number'
+    left, right = normalized_words(draft['name']), normalized_words(existing['name'])
+    if not left or not right:
+        return 0, ''
+    if left == right:
+        return .98, 'Same name or equivalent electronics terminology'
+    shared = left & right
+    identifiers = {word for word in shared if re.match(r'^[a-z]+[a-z0-9]*\d[a-z0-9]*$',word)}
+    if identifiers:
+        return .91, 'Related part identifier: ' + ', '.join(sorted(identifiers))
+    families = shared & {'arduino','raspberrypi','stm32','teensy','feather','nucleo'}
+    if families:
+        return .82, 'Related hardware family: ' + ', '.join(sorted(families))
+    # Do not flag generic names solely because only the resistance/value differs.
+    values_left = {w for w in left if w[0].isdigit()}
+    values_right = {w for w in right if w[0].isdigit()}
+    if values_left and values_right and not values_left & values_right:
+        return 0, ''
+    overlap = len(shared) / len(left | right)
+    ratio = SequenceMatcher(None,' '.join(sorted(left)),' '.join(sorted(right))).ratio()
+    if len(shared) >= 2 and overlap >= .6:
+        return .84 + .1 * overlap, 'Closely related component names'
+    if shared and ratio >= .87:
+        return .8 + .1 * ratio, 'Similar wording or a possible spelling variation'
+    return 0, ''
+
+def similar_components(con, values, exclude_id=''):
+    matches = []
+    for row in con.execute(COMPONENT_SELECT + ' WHERE c.id<>?', (exclude_id,)):
+        candidate = dict(row)
+        score, reason = component_similarity(values, candidate)
+        if score:
+            matches.append({**candidate, 'similarity_score': round(score,3), 'similarity_reason': reason})
+    return sorted(matches,key=lambda row:(-row['similarity_score'],row['inventory_number']))[:5]
+
+@lru_cache(maxsize=1)
+def similarity_relationships(records):
+    rows = [dict(zip(['id','name','model','inventory_number'],record)) for record in records]
+    links = {row['id']:[] for row in rows}
+    for index,left in enumerate(rows):
+        for right in rows[index+1:]:
+            score, reason = max(component_similarity(left,right),component_similarity(right,left))
+            if not score:
+                continue
+            for source,target in [(left,right),(right,left)]:
+                links[source['id']].append({'id':target['id'],'name':target['name'],
+                    'inventory_number':target['inventory_number'],'reason':reason})
+    return links
+
+@app.get('/api/components/relationships')
+def component_relationships():
+    with db() as con:
+        rows = con.execute(COMPONENT_SELECT + ' ORDER BY c.id').fetchall()
+    records = tuple((row['id'],row['name'],row['model'],row['inventory_number']) for row in rows)
+    return similarity_relationships(records)
+
+def warn_if_similar(con, values, allow_similar, exclude_id=''):
+    if not allow_similar:
+        matches = similar_components(con, values, exclude_id)
+        if matches:
+            raise HTTPException(409, {'code':'similar_components',
+                'message':'Similar components already exist. Compare them before saving separately.', 'matches':matches})
+
+@app.post('/api/components/similar')
+def check_similar(component: Component, exclude_id: str = ''):
+    with db() as con:
+        return {'matches': similar_components(con,component.model_dump(),exclude_id)}
 
 @app.get('/')
 def home():
@@ -201,20 +380,18 @@ def home():
 
 @app.get('/api/components')
 def list_components(q: str = '', category: str = '', location: str = ''):
-    query = 'SELECT * FROM components WHERE 1=1'
+    query = COMPONENT_SELECT + ' WHERE 1=1'
     args = []
-    if q:
-        query += " AND (name LIKE ? OR model LIKE ? OR manufacturer LIKE ? OR notes LIKE ? OR project LIKE ?)"
-        args.extend([f'%{q}%'] * 5)
     if category:
         query += ' AND category=?'
-        args.append(category)
+        args.append(normalize_category(category))
     if location:
         query += ' AND location=?'
         args.append(location)
     query += ' ORDER BY updated_at DESC'
     with db() as con:
-        return [dict(x) for x in con.execute(query, args).fetchall()]
+        rows = [dict(x) for x in con.execute(query, args).fetchall()]
+    return [row for row in rows if component_matches_search(row,q)]
 
 @app.get('/api/stats')
 def stats():
@@ -228,21 +405,28 @@ def stats():
     }
 
 @app.post('/api/components', status_code=201)
-def create_component(component: Component):
+def create_component(component: Component, allow_similar: bool = False):
     ident = str(uuid.uuid4())
     stamp = now()
     values = component.model_dump()
     with db() as con:
+        con.execute('BEGIN IMMEDIATE')
+        warn_if_similar(con, values, allow_similar)
         con.execute('INSERT INTO components (' + ','.join(['id']+FIELDS+['created_at','updated_at']) + ') VALUES (' + ','.join('?' for _ in range(len(FIELDS)+3)) + ')', [ident] + [values[k] for k in FIELDS] + [stamp,stamp])
+        con.execute('INSERT INTO inventory_numbers (component_id) VALUES (?)',(ident,))
         result = get_component(con, ident)
     events.publish()
     return result
 
 @app.put('/api/components/{ident}')
-def update_component(ident: str, component: Component):
+def update_component(ident: str, component: Component, allow_similar: bool = False):
     values = component.model_dump()
     with db() as con:
+        con.execute('BEGIN IMMEDIATE')
         old = get_component(con, ident)
+        # Ordinary stock/location edits need no repeated duplicate confirmation.
+        if any(values[field] != old[field] for field in ['name','model','manufacturer','category']):
+            warn_if_similar(con, values, allow_similar, ident)
         # Preserve stored photo and threshold settings when older clients omit them.
         for field in ['image_back', 'min_quantity']:
             if field not in component.model_fields_set:
@@ -396,6 +580,7 @@ def identification_result(text, provider, fallback_reason):
         if field in result and not isinstance(result[field], str):
             raise ValueError('Invalid identification field')
     metadata = {field: result.get(field, '').strip() for field in IDENTIFICATION_FIELDS}
+    metadata['category'] = normalize_category(metadata['category'])
     full_suggestions = []
     for field in ['name', 'category', 'manufacturer', 'model']:
         maximum = METADATA_PROPERTIES[field]['maxLength']
@@ -419,9 +604,9 @@ def identification_result(text, provider, fallback_reason):
 @app.get('/api/export.csv')
 def export_csv():
     with db() as con:
-        rows = [dict(x) for x in con.execute('SELECT * FROM components ORDER BY name').fetchall()]
+        rows = [dict(x) for x in con.execute(COMPONENT_SELECT + ' ORDER BY name').fetchall()]
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=['id'] + FIELDS + ['created_at','updated_at'])
+    writer = csv.DictWriter(output, fieldnames=['inventory_number','id'] + FIELDS + ['created_at','updated_at'])
     writer.writeheader()
     writer.writerows(rows)
     return StreamingResponse(iter([output.getvalue()]), media_type='text/csv', headers={'Content-Disposition':'attachment; filename="inventory-portal.csv"'})

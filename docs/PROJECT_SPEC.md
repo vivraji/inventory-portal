@@ -262,3 +262,52 @@ on 2026-11-11 using merged commit `8252d2f`. All 53 tests and CI passed. A consi
 backup and previous image were retained, protected-file checksums matched after
 the update, and live read-only asset/API/SSE/LAN checks passed. Existing thresholds
 and inventory records were preserved.
+
+## Inventory numbers and comparison — feature branch, deployment pending
+
+Assign a permanent `INV-000001` style inventory number server-side. Preserve UUIDs,
+record values, photographs and timestamps. Use an additive SQLite AUTOINCREMENT
+ledger keyed by component UUID, backfill missing ledger entries in creation order,
+and never remove ledger entries when components are deleted. The startup migration
+must be repeatable without consuming numbers or renumbering records. New numbers
+are allocated in the save transaction; rejected saves do not reserve numbers.
+Show numbers in cards, the edit form, search, comparison and CSV export.
+
+Warn before saving if another record has the same normalized model/part number or
+a locally similar name using electronics vocabulary, fuzzy word similarity and
+common resistor-value notation. This is advisory heuristic matching, not general
+semantic embedding or AI judgment. Show up to five numbered candidates with the
+match reason, model, stock and location. Never merge or alter existing quantities
+automatically. Allow comparison with the draft, correction, or explicit confirmation
+to save separately. Check before photo upload and again within an immediate SQLite
+transaction on unconfirmed writes. Recheck changed drafts; exclude the edited record
+and permit ordinary stock/location updates without repeated identity warnings.
+
+Provide responsive side-by-side comparison for two selected saved components and
+for a draft against a warning candidate. Show identifying metadata, stock, storage,
+projects, vendor, price, datasheet, notes and front/back images; highlight differing
+values. Preserve the open form and draft photos. Update saved comparison values
+on inventory refresh, and close comparison if an entry is deleted. Tests cover
+migration/number stability, search/export, duplicate confirmation, explicit distinct
+part values, concurrency, mobile comparison bounds and draft preservation.
+
+## Canonical categories, broad search and linked similarities — feature branch
+
+Normalize category casing and spacing at API writes, AI result validation and
+startup, preserving common electronics acronyms. Use labels such as `Sensor Module`
+with spaces. Preserve distinct functional subcategories and all non-category data.
+Filters must reconcile an old selected case variant with its canonical label rather
+than adding a second option. The owner-requested stored-label cleanup was backed
+up and verified independently; deploying the prevention code is still pending.
+
+Search all textual/numeric metadata, not only a subset of name/model fields.
+Support partial terms and bounded typo matching with transpositions, shared between
+browser/API regression fixtures. Preserve active category/storage filters; do not
+search uploaded image bytes or make paid AI calls for search.
+
+Show a linked similarity indicator on both ends of each detected relationship,
+listing peer names and inventory numbers with open/compare actions. Use stable UUID
+hash links so copied/new-tab links resolve to the peer entry. Preserve expanded
+related-item lists through SSE refresh and remove stale relationships on deletion.
+Cache the symmetric relationship map while identities are unchanged; do not cap
+one side differently from the other. Existing save-time heuristic limitations apply.
