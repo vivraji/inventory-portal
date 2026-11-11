@@ -287,3 +287,105 @@ for (const [name,engine] of Object.entries({chromium,webkit})) {
         }
     });
 }
+
+for(const [name,engine] of Object.entries({chromium,webkit})){
+    test(name+': selected AI reviews require explicit approval and fit phone screens',async()=>{
+        const fixture=await fixtureServer();let browser;
+        try{
+            browser=await engine.launch({headless:true});const page=await browser.newPage({viewport:{width:390,height:844}});
+            const errors=[];page.on('pageerror',e=>errors.push(e.message));
+            const records=Array.from({length:9},(_,i)=>({...component,id:'review-'+i,inventory_number:'INV-'+String(i+1).padStart(6,'0'),
+                name:i===0?'<img src=x onerror="window.injection=true">':'Fixture sensor '+i}));
+            let review,requests=0,applies=0;
+            await page.route('**/api/**',async route=>{
+                const request=route.request(),path=new URL(request.url()).pathname;
+                if(path==='/api/events')return route.fulfill({contentType:'text/event-stream',body:'retry: 3000\n\n'});
+                if(path==='/api/similarity-reviews'&&request.method()==='POST'){
+                    requests++;const body=request.postDataJSON();assert.equal(body.component_ids.length,2);assert.equal(body.provider,'both');
+                    assert.deepEqual(Object.keys(body).sort(),['component_ids','provider']);
+                    review={id:'saved-fixture',created_at:'2026-11-11T20:00:00Z',components:records.slice(0,2),
+                        pairs:[{pair_id:'P01',left:records[0],right:records[1]}],providers:[
+                            {provider:'claude',model:'fixture-claude',status:'success',results:[{pair_id:'P01',verdict:'different_components',confidence:'high',
+                                reason:'Different sensing functions. '.repeat(40),differences:'Tilt versus magnetic',evidence_needed:'Check markings'}]},
+                            {provider:'openai',model:'fixture-openai',status:'error',error:'Provider returned HTTP 429',results:[]}]};
+                    return route.fulfill({json:review});
+                }
+                if(path.endsWith('/apply')){
+                    applies++;assert.deepEqual(request.postDataJSON(),{choices:[{pair_id:'P01',verdict:'different_components'}]});
+                    if(applies===1)return route.fulfill({status:409,json:{detail:'Component metadata changed. Run a fresh review before applying decisions.'}});
+                    return route.fulfill({json:{applied:1}});
+                }
+                if(path==='/api/similarity-reviews')return route.fulfill({json:review?[{id:review.id,created_at:review.created_at,component_count:2}]:[]});
+                if(path==='/api/similarity-reviews/saved-fixture')return route.fulfill({json:review});
+                return route.fulfill({json:path==='/api/components'?records:path==='/api/components/relationships'?{}:
+                    {types:9,units:9,low_stock:9,categories:[component.category],locations:[]}});
+            });
+            await page.goto(fixture.url);await page.locator('.component').nth(8).waitFor();
+            await page.locator('#openReviewButton').click();await page.locator('#reviewOverlay').waitFor({state:'visible'});
+            assert.equal(requests,0);assert.equal(await page.locator('#runReview').isDisabled(),true);
+            for(let i=0;i<8;i++)await page.locator('#reviewComponents input').nth(i).check();
+            await page.locator('#reviewComponents input').nth(8).click();
+            assert.equal(await page.locator('#reviewComponents input:checked').count(),8);
+            assert.match(await page.locator('#reviewStatus').innerText(),/at most 8/);
+            for(let i=2;i<8;i++)await page.locator('#reviewComponents input').nth(i).uncheck();
+            await page.locator('#reviewSearch').fill('Fixture');await page.locator('#reviewSearch').fill('');
+            assert.equal(await page.locator('#reviewComponents input:checked').count(),2);
+            await page.locator('#runReview').click();await page.locator('.review-pair').waitFor();
+            assert.equal(requests,1);assert.equal(applies,0);assert.equal(await page.evaluate(()=>window.injection),undefined);
+            assert.match(await page.locator('#reviewResults').innerText(),/HTTP 429/);
+            assert.equal(await page.locator('input[data-apply-pair]:checked').count(),0);
+            await page.locator('#applyReview').click();assert.equal(applies,0);
+            await page.locator('input[data-apply-pair]').check();await page.locator('#applyReview').click();assert.equal(applies,0);
+            await page.locator('select[data-pair]').selectOption('different_components');await page.locator('#applyReview').click();
+            await page.waitForFunction(()=>document.getElementById('reviewStatus').textContent.includes('fresh review'));
+            assert.equal(applies,1);
+            await page.locator('#applyReview').click();await page.waitForFunction(()=>document.getElementById('reviewStatus').textContent.includes('Applied 1'));
+            assert.equal(applies,2);
+            assert.match(await page.getByRole('link',{name:'Download HTML review report'}).getAttribute('href'),/saved-fixture\/report$/);
+            for(const width of [320,390,844]){
+                await page.setViewportSize({width,height:844});
+                const fits=await page.locator('.review-modal').evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth,page:document.documentElement.scrollWidth,width:innerWidth}));
+                assert.ok(fits.scroll<=fits.client+1&&fits.page<=fits.width+1,JSON.stringify(fits));
+            }
+            await page.keyboard.press('Escape');assert.equal(await page.locator('#reviewOverlay').isVisible(),false);
+            assert.deepEqual(errors,[]);
+        }finally{if(browser)await browser.close();await new Promise(resolve=>fixture.server.close(resolve))}
+    });
+}
+
+for(const [name,engine] of Object.entries({chromium,webkit})){
+    test(name+': varying card content keeps stock and comparison controls aligned',async()=>{
+        const fixture=await fixtureServer();let browser;
+        try{
+            browser=await engine.launch({headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}});
+            const rows=Array.from({length:4},(_,i)=>({...component,id:'aligned-'+i,inventory_number:'INV-00000'+(i+1),
+                name:i===1?'Long descriptive sensor module with several identifying features '.repeat(3):'Short sensor',
+                category:i===2?'Sensor / Motion Detection (Passive Infrared)':'Sensor Module',model:'Model',location:'A',quantity:i+1}));
+            await page.route('**/api/**',route=>{
+                const path=new URL(route.request().url()).pathname;
+                if(path==='/api/events')return route.fulfill({contentType:'text/event-stream',body:'retry: 3000\n\n'});
+                return route.fulfill({json:path==='/api/components'?rows:path==='/api/components/relationships'?{
+                    'aligned-0':[{id:'aligned-2',inventory_number:'INV-000003',name:rows[2].name,reason:'Reviewed: Related but distinct'}]}:
+                    {types:4,units:10,low_stock:1,categories:['Sensor Module'],locations:['A']}});
+            });
+            await page.goto(fixture.url);await page.locator('.component').nth(3).waitFor();
+            for(const width of [1440,1024,768,390]){
+                await page.setViewportSize({width,height:1000});
+                for(const expanded of [false,true]){
+                    await page.locator('.similarity-links').evaluate((e,open)=>{e.open=open},expanded);
+                    const metrics=await page.locator('.component').evaluateAll(cards=>cards.map(c=>({
+                        top:c.getBoundingClientRect().top,height:c.getBoundingClientRect().height,
+                        stock:c.querySelector('.bottom').getBoundingClientRect().top,
+                        compare:c.querySelector('.compare-choice').getBoundingClientRect().top
+                    })));
+                    for(const left of metrics)for(const right of metrics)if(Math.abs(left.top-right.top)<1){
+                        assert.ok(Math.abs(left.height-right.height)<1,JSON.stringify(metrics));
+                        assert.ok(Math.abs(left.stock-right.stock)<1,JSON.stringify(metrics));
+                        assert.ok(Math.abs(left.compare-right.compare)<1,JSON.stringify(metrics));
+                    }
+                    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+                }
+            }
+        }finally{if(browser)await browser.close();await new Promise(resolve=>fixture.server.close(resolve))}
+    });
+}

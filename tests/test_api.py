@@ -646,3 +646,163 @@ class ApiTests(unittest.TestCase):
                                ('Amaz',{first['id']}),('Amzon',{first['id']}),('photo mouser',{second['id']})]:
             with self.subTest(query=query):
                 self.assertEqual({row['id'] for row in self.client.get('/api/components',params={'q':query}).json()},expected)
+
+    def mock_pair_review(self, provider, pairs, review_id):
+        return {'provider':provider,'model':'fixture-'+provider,'status':'success','results':[
+            {'pair_id':p['pair_id'],'verdict':'different_components','confidence':'high',
+             'reason':'Distinct sensing functions','differences':'Different sensor elements',
+             'evidence_needed':'Check module markings'} for p in pairs]}
+
+    def review(self, records, provider='both'):
+        with patch.dict(self.module.os.environ,{'ANTHROPIC_API_KEY':'fixture','OPENAI_API_KEY':'fixture'}), \
+             patch.object(self.module,'request_pair_review',new=AsyncMock(side_effect=self.mock_pair_review)) as call:
+            response=self.client.post('/api/similarity-reviews',json={
+                'component_ids':[c['id'] for c in records],'provider':provider})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(call.await_count,2 if provider=='both' else 1)
+            return response.json()
+
+    def test_selected_review_is_read_only_and_has_complete_independent_pair_coverage(self):
+        records=[self.create(name='Module '+str(i),quantity=5,image='/uploads/retained.jpg') for i in range(3)]
+        before=self.client.get('/api/components').json()
+        review=self.review(records)
+        self.assertEqual(len(review['pairs']),3)
+        self.assertEqual(review['scope'],'metadata_only')
+        self.assertEqual({r['provider'] for r in review['providers']},{'claude','openai'})
+        self.assertEqual(self.client.get('/api/components').json(),before)
+        self.assertEqual(self.client.get('/api/similarity-reviews').json()[0]['id'],review['id'])
+        self.assertEqual(self.client.get('/api/similarity-reviews/'+review['id']).json(),review)
+        for pair in review['pairs']:
+            self.assertEqual(set(pair['left']),set(['inventory_number',*self.module.REVIEW_FIELDS]))
+        with self.module.db() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM similarity_decisions').fetchone()[0],0)
+
+    def test_review_apply_updates_both_links_and_save_prechecks_without_changing_components(self):
+        a=self.create(name='Temperature sensor',model='TEMP-4',quantity=9)
+        b=self.create(name='Thermal probe',model='TEMP-4')
+        before=self.client.get('/api/components').json();review=self.review([a,b]);pid=review['pairs'][0]['pair_id']
+        url='/api/similarity-reviews/'+review['id']+'/apply'
+        with patch.object(self.module.events,'publish') as publish:
+            response=self.client.post(url,json={'choices':[{'pair_id':pid,'verdict':'different_components'}]})
+            self.assertEqual(response.json(),{'applied':1});publish.assert_called_once()
+        links=self.client.get('/api/components/relationships').json()
+        self.assertEqual(links[a['id']],[]);self.assertEqual(links[b['id']],[])
+        matches=self.client.post('/api/components/similar',params={'exclude_id':a['id']},json=a).json()['matches']
+        self.assertEqual(matches,[])
+        self.assertEqual(self.client.get('/api/components').json(),before)
+        # A genuinely new entry still warns; an old pair decision never suppresses it.
+        self.assertEqual(self.client.post('/api/components',json={'name':a['name'],'model':a['model']}).status_code,409)
+        for verdict in ['related_but_distinct','likely_same_component','automatic']:
+            self.assertEqual(self.client.post(url,json={'choices':[{'pair_id':pid,'verdict':verdict}]}).status_code,200)
+            links=self.client.get('/api/components/relationships').json()
+            self.assertEqual(links[a['id']][0]['id'],b['id'])
+            self.assertEqual(links[b['id']][0]['id'],a['id'])
+        self.assertEqual(self.client.get('/api/components').json(),before)
+
+    def test_review_stale_metadata_rejects_atomically_and_stock_edits_do_not_invalidate(self):
+        records=[self.create(name='Sensor '+str(i)) for i in range(3)]
+        review=self.review(records);pairs=review['pairs'];url='/api/similarity-reviews/'+review['id']+'/apply'
+        target=next(c for c in records if c['id']==pairs[-1]['right_id'])
+        self.client.put('/api/components/'+target['id']+'?allow_similar=true',json={**target,'notes':'changed'})
+        with patch.object(self.module.events,'publish') as publish:
+            response=self.client.post(url,json={'choices':[{'pair_id':p['pair_id'],'verdict':'different_components'} for p in pairs]})
+            self.assertEqual(response.status_code,409);publish.assert_not_called()
+        with self.module.db() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM similarity_decisions').fetchone()[0],0)
+        fresh=self.review(records[:2]);a=next(c for c in self.client.get('/api/components').json() if c['id']==records[0]['id'])
+        self.client.put('/api/components/'+a['id']+'?allow_similar=true',json={**a,'quantity':33})
+        response=self.client.post('/api/similarity-reviews/'+fresh['id']+'/apply',json={
+            'choices':[{'pair_id':fresh['pairs'][0]['pair_id'],'verdict':'different_components'}]})
+        self.assertEqual(response.status_code,200)
+        # Decisions expire on metadata edits and relationships return to the matcher.
+        pair=fresh['pairs'][0]
+        with self.module.db() as con:
+            updated=self.module.get_component(con,a['id'])
+            con.execute('UPDATE components SET notes=? WHERE id=?',('fresh notes',a['id']))
+            decisions=self.module.load_similarity_decisions(con)
+            updated['notes']='fresh notes'
+            other=self.module.get_component(con,pair['right_id'] if pair['left_id']==a['id'] else pair['left_id'])
+            self.assertEqual(self.module.reviewed_similarity(updated,other,decisions),
+                             max(self.module.component_similarity(updated,other),self.module.component_similarity(other,updated)))
+
+    def test_review_validation_history_report_escaping_and_delete_cascade(self):
+        a=self.create(name='<script>alert(1)</script>');b=self.create(name='Other part')
+        for ids in [[a['id']],[a['id'],a['id']],[a['id']]*9]:
+            self.assertEqual(self.client.post('/api/similarity-reviews',json={'component_ids':ids}).status_code,422)
+        self.assertEqual(self.client.post('/api/similarity-reviews',json={'component_ids':[a['id'],b['id']]}).status_code,503)
+        review=self.review([a,b]);base='/api/similarity-reviews/'+review['id'];pid=review['pairs'][0]['pair_id']
+        response=self.client.get(base+'/report')
+        self.assertEqual(response.status_code,200);self.assertIn('attachment',response.headers['content-disposition'])
+        self.assertNotIn('<script>',response.text);self.assertIn('&lt;script&gt;',response.text)
+        self.assertEqual(self.client.post(base+'/apply',json={'choices':[{'pair_id':'missing','verdict':'automatic'}]}).status_code,422)
+        self.assertEqual(self.client.post(base+'/apply',json={'choices':[{'pair_id':pid,'verdict':'automatic'}]*2}).status_code,422)
+        self.client.post(base+'/apply',json={'choices':[{'pair_id':pid,'verdict':'related_but_distinct'}]})
+        self.client.delete('/api/components/'+a['id'])
+        with self.module.db() as con:
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM similarity_decisions').fetchone()[0],0)
+        self.assertEqual(self.client.post(base+'/apply',json={'choices':[{'pair_id':pid,'verdict':'automatic'}]}).status_code,404)
+        self.assertEqual(self.client.get('/api/similarity-reviews/missing').status_code,404)
+
+    def test_review_real_provider_payloads_and_validation_are_mocked(self):
+        a=self.create(name='Tilt sensor',notes='Untrusted catalog notes');b=self.create(name='Hall sensor')
+        self.claude_post.side_effect=None
+        def provider_response(url,**kwargs):
+            data=kwargs['json'];claude='anthropic' in url
+            prompt=data['messages'][0 if claude else 1]['content'];pairs=json.loads(prompt)['pairs']
+            values=self.mock_pair_review('claude' if claude else 'openai',pairs,'fixture')['results']
+            text=json.dumps({'results':values})
+            raw={'model':'fixture','stop_reason':'end_turn','content':[{'type':'text','text':text}]} if claude else {
+                'model':'fixture','choices':[{'finish_reason':'stop','message':{'content':text}}]}
+            self.assertNotIn('image',prompt);self.assertNotIn('quantity',prompt)
+            return httpx.Response(200,json=raw,request=httpx.Request('POST',url))
+        self.claude_post.side_effect=provider_response
+        with patch.dict(self.module.os.environ,{'ANTHROPIC_API_KEY':'fixture-claude','OPENAI_API_KEY':'fixture-openai'}):
+            response=self.client.post('/api/similarity-reviews',json={'component_ids':[a['id'],b['id']]})
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(all(p['status']=='success' for p in response.json()['providers']))
+        self.assertEqual(self.claude_post.await_count,2)
+        self.mock_ai.assert_not_called()
+        for args in self.claude_post.call_args_list:
+            self.assertIn('Bearer fixture-',args.kwargs['headers']['Authorization'])
+        # Malformed success is a failure, not an applicable classification.
+        self.claude_post.side_effect=lambda url,**kwargs:httpx.Response(200,json={
+            'stop_reason':'end_turn','content':[{'type':'text','text':'{"results":[]}'}]},request=httpx.Request('POST',url))
+        with patch.dict(self.module.os.environ,{'ANTHROPIC_API_KEY':'fixture'}):
+            review=self.client.post('/api/similarity-reviews',json={'component_ids':[a['id'],b['id']],'provider':'claude'}).json()
+        self.assertEqual(review['providers'][0]['status'],'error')
+        self.assertEqual(self.client.post('/api/similarity-reviews/'+review['id']+'/apply',json={
+            'choices':[{'pair_id':'P01','verdict':'different_components'}]}).status_code,409)
+
+    def test_review_partial_provider_failure_has_no_fallback_or_secret_exposure(self):
+        a=self.create(name='Optical sensor');b=self.create(name='Mechanical sensor')
+        prompts=[]
+        def response(url,**kwargs):
+            prompt=kwargs['json']['messages'][0 if 'anthropic' in url else 1]['content']
+            prompts.append(prompt)
+            if 'anthropic' in url:
+                return httpx.Response(401,json={'error':'fixture-secret rejected'},request=httpx.Request('POST',url))
+            values=self.mock_pair_review('openai',json.loads(prompt)['pairs'],'test')['results']
+            return httpx.Response(200,json={'choices':[{'finish_reason':'stop',
+                'message':{'content':json.dumps({'results':values})}}]},request=httpx.Request('POST',url))
+        self.claude_post.side_effect=response
+        with patch.dict(self.module.os.environ,{'ANTHROPIC_API_KEY':'fixture-secret','OPENAI_API_KEY':'fixture-openai'}):
+            r=self.client.post('/api/similarity-reviews',json={'component_ids':[a['id'],b['id']]})
+        self.assertEqual(r.status_code,200);self.assertNotIn('fixture-secret',r.text)
+        review=r.json();self.assertEqual([p['status'] for p in review['providers']],['error','success'])
+        self.assertEqual(self.claude_post.await_count,2);self.assertEqual(prompts[0],prompts[1])
+        self.assertNotIn('left_id',prompts[0]);self.assertNotIn('right_id',prompts[0])
+        self.assertEqual(self.client.post('/api/similarity-reviews/'+review['id']+'/apply',json={
+            'choices':[{'pair_id':'P01','verdict':'different_components'}]}).status_code,200)
+        logs=(self.root/'data/logs/ai-identification.jsonl').read_text()
+        self.assertNotIn('fixture-secret',logs)
+
+    def test_review_maximum_selection_covers_all_pairs_and_history_is_bounded(self):
+        records=[self.create(name='Fixture module '+str(i)) for i in range(8)]
+        review=self.review(records,'claude')
+        self.assertEqual(len(review['pairs']),28)
+        self.assertEqual(len(review['providers'][0]['results']),28)
+        with self.module.db() as con:
+            for i in range(25):
+                con.execute('INSERT INTO similarity_reviews VALUES (?,?,?)',
+                            ('fixture-'+str(i),self.module.now(),json.dumps(review)))
+        self.assertEqual(len(self.client.get('/api/similarity-reviews').json()),20)

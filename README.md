@@ -401,3 +401,62 @@ and save prechecks, and HTTP/SSE/LAN access passed. Database contents, photograp
 private reports, environment and Docker files matched the consistent local backup
 at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
 retained as `inventory-portal-inventory:pre-sensor-matcher`.
+
+## Selected-component AI similarity reviews — feature branch; not deployed
+
+Open **AI similarity review** in the sidebar, or **AI review** at the top of the
+phone/desktop portal. Search and select 2–8 components, then choose Claude,
+OpenAI, or both. Press **Run AI review** to make paid API calls. Every pair within
+the selection is checked, even if the automatic matcher did not link it. Both
+providers receive the same inventory numbers, names, categories, manufacturers,
+models and notes independently. This workflow is metadata-only: photos, UUIDs,
+quantities, storage, projects and purchase details are not sent. It does not
+re-identify components from photographs or edit component metadata/categories.
+
+Results show each provider's model, verdict, confidence, reasons, differences and
+missing evidence. Provider failures are explicit; no automatic fallback/retry or
+inventory mutation occurs. When one provider fails, a successful independent review
+can still be used after human review. Incomplete/invalid responses cannot be applied.
+Saved reviews can be reopened (latest 20 listed) and downloaded as escaped,
+self-contained HTML reports. Reports record the AI findings, which can differ from
+subsequent user-approved classifications. They contain private catalog metadata.
+
+For each pair you want to change, choose a classification and check **Apply this
+pair**, then press **Apply checked classifications**:
+
+- **Possible duplicate** or **Related but distinct** adds a reciprocal reviewed link
+  and a save warning for that existing pair.
+- **Different components** suppresses the pair's link and warning.
+- **Use automatic matcher** removes the previous pair override.
+
+No records are merged/deleted, and quantities, photographs and component fields
+are untouched. Decisions apply only to those two existing UUIDs while the reviewed
+name/category/manufacturer/model/notes remain unchanged. Metadata changes expire
+an override and require a fresh review before applying it again; ordinary stock or
+storage edits retain it. Applying a stale or deleted pair fails atomically, without
+partially applying other selected decisions. SSE refreshes links on other devices.
+Newly added components still receive ordinary automatic duplicate checks.
+
+Reviews and decisions live in additive SQLite tables, included in full database
+backups; deleting a component removes its active pair decisions but retains review
+history. All review endpoints have the application's existing trusted-LAN-only,
+no-authentication access model. Keep private reports and database files out of Git.
+No new dependency or Docker configuration is required. Deployment requires approval.
+
+API routes: `POST/GET /api/similarity-reviews`,
+`GET /api/similarity-reviews/{id}`, `POST /api/similarity-reviews/{id}/apply`, and
+`GET /api/similarity-reviews/{id}/report`. Create takes `component_ids` and `provider`
+(`both`, `claude`, `openai`); apply takes `choices` with `pair_id` and `verdict`.
+Apply does not call either provider. Provider calls are mocked in automated tests.
+
+On Mac/iPhone on the same home network, the current Mac local hostname allows
+`http://mahdi.local:8000` instead of an IP address; network Bonjour/mDNS resolution
+must be available. No network settings are changed by this feature.
+
+## Card control alignment — feature branch; not deployed
+
+Cards stretch to the tallest content within each grid row. Stock quantity/status
+and Compare controls stay aligned at the bottom, while long names, category labels
+and expanded similarity links remain fully readable above them. The layout still
+adapts to phone widths without horizontal scrolling. Chromium and WebKit fixtures
+verify aligned controls with varying text lengths and expanded links.

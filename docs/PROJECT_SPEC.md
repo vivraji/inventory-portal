@@ -341,3 +341,45 @@ and save prechecks, and HTTP/SSE/LAN access passed. Database contents, photograp
 private reports, environment and Docker files matched the consistent local backup
 at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
 retained as `inventory-portal-inventory:pre-sensor-matcher`.
+
+## Selected-component similarity review — implemented on feature branch; not deployed
+
+Provide a sidebar/menu action and a phone-visible AI review button. Users select
+2–8 components and explicitly submit every selected pair to Claude, OpenAI or both.
+Both providers run independently with the same metadata, with no automatic fallback
+or retry. Send only inventory numbers and descriptive identity fields, never photo
+bytes, UUIDs, quantities, storage or purchase information. The UI discloses provider
+routing, paid API calls and metadata-only scope before submission. Photographic
+re-identification and automatic category/metadata editing are outside this workflow.
+
+Validate structured pair coverage, verdicts, confidence and explanation lengths;
+show failures safely without leaking keys. Save immutable component snapshots and
+AI findings locally in additive SQLite review history. List the latest 20 reviews,
+allow reopening saved reviews, and provide an escaped HTML download. Historical
+reports describe AI findings rather than asserting that decisions were applied.
+
+A separate explicit apply operation accepts checked pair decisions after human
+review: possible duplicate, related but distinct, different components, or return
+to automatic matching. Reviewed positive decisions create reciprocal links and
+save warnings; negative decisions suppress them. Apply must be transactional,
+require at least one successful provider review, reject stale/deleted pairs, and
+publish SSE only after commit. No merge, deletion, stock change, component field
+rewrite or photo change occurs. Decisions are tied to both UUIDs and fingerprints
+of name/category/manufacturer/model/notes; changed metadata restores heuristic
+matching. Stock/storage edits retain decisions. New entries are not covered by
+another pair's override. Deletion cascades active decisions, retaining review
+history for audit. Full database backups include both new tables.
+
+Verification uses temporary databases and mocked providers, including independent
+requests, incomplete output, failed providers, data preservation, stale atomic
+rejection, symmetric links, save prechecks, reset to automatic, selection limits,
+HTML escaping, and Chromium/WebKit phone layouts. No live AI calls or deployment
+are performed during implementation. Existing LAN access and Docker settings remain.
+
+## Card alignment — implemented on feature branch; not deployed
+
+Stretch cards and their details to equal height within each responsive grid row.
+Anchor quantity/stock status and Compare controls at the bottom; render related
+links above those controls. Preserve full readable names/categories and responsive
+widths. Browser checks cover variable content and expanded relationship lists in
+Chromium and WebKit from phone to desktop widths.
