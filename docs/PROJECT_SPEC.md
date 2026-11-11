@@ -25,7 +25,8 @@ Planned requirements below are not claims of current functionality.
 The backend, models, schema initialization, and database access currently share
 one Python file. Schema initialization uses `CREATE TABLE IF NOT EXISTS`; there
 is no migration framework. The frontend fetches all components and statistics at
-page load and after its own saves/deletes, and filters the component list locally.
+page load, after its own saves/deletes, on SSE invalidations, and when the browser
+regains focus or visibility. It filters the component list locally.
 
 ## Implemented features and limits
 
@@ -38,17 +39,19 @@ page load and after its own saves/deletes, and filters the component list locall
 | Photos | Upload JPEG, PNG, WebP, or HEIC, up to 10 MiB per photo; photos retained after record deletion |
 | AI identification | JPEG, PNG, or WebP submitted explicitly to OpenAI; suggested fields, confidence, and uncertainty shown for review before saving |
 | Export | CSV download of component records |
+| Synchronization | SSE invalidation after committed component changes; reconnect refresh, focus/visibility fallback, serialized reads, and retry on refresh failures |
 | Storage and projects | Free-text location and project fields; location menu displays existing location names |
 | Mobile UI | Responsive layout and image file picker; dedicated camera capture workflow is not implemented |
 
 Existing API routes are `GET /api/components`, `POST /api/components`,
 `PUT /api/components/{ident}`, `DELETE /api/components/{ident}`,
-`GET /api/stats`, `POST /api/upload`, `POST /api/identify`, and
+`GET /api/stats`, `GET /api/events`, `POST /api/upload`, `POST /api/identify`, and
 `GET /api/export.csv`. The UI is served at `/`, with static assets and uploaded
 photos under `/static` and `/uploads`.
 
-There is no SSE stream, focus-refresh fallback, automated regression suite, QR
-generation/scanning, storage-bin entity, project BOM, quantity allocation model,
+SSE synchronization and an initial automated synchronization regression suite are
+implemented on the Phase 1 feature branch. There is no QR generation/scanning,
+storage-bin entity, project BOM, quantity allocation model,
 or application backup/restore workflow. CSV export is not a complete backup.
 The README describes a manual stopped-container backup of `data/`.
 
@@ -60,10 +63,8 @@ only on the trusted home network or a secured private connection; do not publish
 it to the public internet.
 
 The inspected Compose configuration publishes `8000:8000` on all host interfaces,
-supporting LAN access subject to host networking and firewall rules. The README's
-claim that the default binding is localhost does not match that configuration.
-Preserve the intended trusted home-network access and reconcile the README in a
-future documentation change; this documentation task does not change Compose.
+supporting LAN access subject to host networking and firewall rules. The README documents this LAN binding.
+Preserve the intended trusted home-network access; Phase 1 does not change Compose.
 
 Ordinary photo uploads stay local. AI identification sends the selected photograph
 to OpenAI and requires a separately configured API key. Suggestions are advisory;
@@ -72,12 +73,22 @@ but conversion for AI identification is not implemented.
 
 ## Planned development, in priority order
 
-### 1. Reliable synchronization
+### 1. Reliable synchronization — implemented; device verification pending
 
-Add server-sent events (SSE) so committed inventory changes on either device
+The implementation uses server-sent events (SSE) so committed inventory changes on either device
 refresh the other device's inventory, statistics, and filters without a manual
 reload. SQLite remains the source of truth; events should trigger authoritative
 reads rather than become a second inventory store.
+
+Verification covers real HTTP streams and simulated browser lifecycle events.
+Manual Mac/iPhone Safari verification remains pending deployment approval. Events
+are transient invalidations with a 3-second reconnect hint and 15-second comment
+heartbeats. Each connection receives an initial invalidation to recover missed
+changes; no replay log is needed. Notifications use bounded per-client queues and
+are process-local: run one Uvicorn worker, as in the current Docker configuration.
+Multiple workers or replicas would require shared event delivery. Direct SQLite
+edits outside the API do not publish events. SSE refresh does not resolve
+concurrent edit conflicts; existing full-record update semantics remain.
 
 Acceptance criteria:
 

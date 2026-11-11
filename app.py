@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import csv
 import io
@@ -5,11 +6,12 @@ import json
 import os
 import sqlite3
 import uuid
+from threading import Lock
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,6 +25,47 @@ DB = DATA / 'inventory.db'
 app = FastAPI(title='Inventory Portal', docs_url='/api/docs')
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 app.mount('/uploads', StaticFiles(directory=UPLOADS), name='uploads')
+
+# One Uvicorn process owns these transient invalidations. SQLite remains authoritative.
+class InventoryEvents:
+    def __init__(self):
+        self.lock = Lock()
+        self.clients = set()
+
+    @staticmethod
+    def wake(queue):
+        if queue.empty():
+            queue.put_nowait(True)
+
+    def publish(self):
+        with self.lock:
+            for loop, queue in self.clients:
+                loop.call_soon_threadsafe(self.wake, queue)
+
+    async def stream(self, request):
+        queue = asyncio.Queue(maxsize=1)
+        client = (asyncio.get_running_loop(), queue)
+        with self.lock:
+            self.clients.add(client)
+        try:
+            # Always invalidate on connect: no event history is needed after a gap.
+            yield 'retry: 3000\nevent: inventory\ndata: {}\n\n'
+            while not await request.is_disconnected():
+                try:
+                    await asyncio.wait_for(queue.get(), timeout=15)
+                    yield 'event: inventory\ndata: {}\n\n'
+                except asyncio.TimeoutError:
+                    yield ': keepalive\n\n'
+        finally:
+            with self.lock:
+                self.clients.discard(client)
+
+events = InventoryEvents()
+
+@app.get('/api/events')
+async def inventory_events(request: Request):
+    return StreamingResponse(events.stream(request), media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 @contextmanager
 def db():
@@ -114,7 +157,9 @@ def create_component(component: Component):
     values = component.model_dump()
     with db() as con:
         con.execute('INSERT INTO components (' + ','.join(['id']+FIELDS+['created_at','updated_at']) + ') VALUES (' + ','.join('?' for _ in range(len(FIELDS)+3)) + ')', [ident] + [values[k] for k in FIELDS] + [stamp,stamp])
-        return get_component(con, ident)
+        result = get_component(con, ident)
+    events.publish()
+    return result
 
 @app.put('/api/components/{ident}')
 def update_component(ident: str, component: Component):
@@ -122,7 +167,9 @@ def update_component(ident: str, component: Component):
     with db() as con:
         get_component(con, ident)
         con.execute('UPDATE components SET ' + ','.join(f'{k}=?' for k in FIELDS) + ',updated_at=? WHERE id=?', [values[k] for k in FIELDS] + [now(),ident])
-        return get_component(con, ident)
+        result = get_component(con, ident)
+    events.publish()
+    return result
 
 @app.delete('/api/components/{ident}')
 def delete_component(ident: str):
@@ -130,6 +177,7 @@ def delete_component(ident: str):
         old = get_component(con, ident)
         con.execute('DELETE FROM components WHERE id=?', (ident,))
     # Retain uploaded photos to avoid accidental data loss on delete.
+    events.publish()
     return {'deleted': old['id']}
 
 @app.post('/api/upload')
