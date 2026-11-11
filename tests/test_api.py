@@ -532,6 +532,34 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/components/similar',json={'name':'1k resistor'}).json()['matches'],[])
         self.assertEqual(self.client.post('/api/components',json={'name':'1k resistor'}).status_code,201)
 
+    def test_different_sensor_functions_do_not_link_or_warn(self):
+        names = ['Tilt vibration sensor module LM393 comparator',
+                 'IR obstacle avoidance sensor module LM393 comparator',
+                 'LDR photoresistor light sensor module LM393 comparator',
+                 'Hall magnetic sensor module LM393 comparator',
+                 'Slotted optocoupler speed sensor module LM393 comparator']
+        records = []
+        for name in names:
+            self.assertEqual(self.client.post('/api/components/similar',json={'name':name}).json()['matches'],[])
+            response = self.client.post('/api/components',json={'name':name})
+            self.assertEqual(response.status_code,201)
+            records.append(response.json())
+        links = self.client.get('/api/components/relationships').json()
+        self.assertTrue(all(not links[row['id']] for row in records))
+        for left in records:
+            for right in records:
+                if left['id'] != right['id']:
+                    self.assertEqual(self.module.component_similarity(left,right)[0],0)
+
+    def test_sensor_matching_retains_same_function_and_exact_module_model(self):
+        first = self.create(name='LDR photoresistor sensor module LM393',model='LIGHT-42')
+        matches = self.client.post('/api/components/similar',json={
+            'name':'LDR photoresistor sensor module LM393'}).json()['matches']
+        self.assertIn(first['id'],[row['id'] for row in matches])
+        matches = self.client.post('/api/components/similar',json={
+            'name':'Hall magnetic sensor module', 'model':'LIGHT-42'}).json()['matches']
+        self.assertIn(first['id'],[row['id'] for row in matches])
+
     def test_similarity_excludes_self_and_does_not_block_ordinary_stock_edits(self):
         first = self.create(name='Temperature sensor',quantity=1)
         second = self.create(name='USB connector')

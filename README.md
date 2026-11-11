@@ -379,3 +379,17 @@ and CI passed before deployment. Read-only live checks passed for HTTP, assets,
 SSE, unique inventory numbers and metadata/typo searches. SQLite integrity passed;
 existing inventory values, photographs, environment and Docker files were preserved.
 Further deployments and restores still require explicit owner approval.
+
+## Sensor similarity correction — implemented on feature branch; not deployed
+
+A metadata-only Claude/OpenAI review found no likely duplicates among the currently
+flagged sensor pairs. Both providers recommended keeping separate entries; some
+OpenAI verdicts described shared circuitry as related but distinct. Similarity
+matching now rejects explicitly different sensor functions (for example tilt,
+ambient light, magnetic, obstacle detection and optical interruption), even when
+they share comparator circuitry. Common support ICs such as LM393 are not treated
+as sensor module identifiers. Exact matching module model fields remain stronger
+evidence, and same-function/name matches remain available. This is a local heuristic,
+not a verified identification or electrical compatibility judgment. No records,
+quantities, categories or photographs are rewritten; both portal links and save
+warnings use the corrected matcher. Deployment still requires owner approval.

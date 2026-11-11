@@ -303,6 +303,23 @@ def component_matches_search(component, query):
             return False
     return True
 
+def sensor_functions(name):
+    words = normalized_words(name)
+    functions = set()
+    groups = {
+        'motion_switch': {'tilt', 'vibration'},
+        'magnetic': {'hall', 'magnetic'},
+        'ambient_light': {'ldr', 'photoresistor'},
+        'optical_interrupter': {'slotted', 'interrupter', 'optocoupler'},
+        'obstacle': {'obstacle', 'avoidance'},
+        'temperature': {'temperature', 'thermistor'},
+        'sound': {'microphone', 'sound'},
+    }
+    for function, terms in groups.items():
+        if words & terms:
+            functions.add(function)
+    return functions
+
 def component_similarity(draft, existing):
     left_model, right_model = part_key(draft['model']), part_key(existing['model'])
     if left_model and left_model == right_model and len(left_model) >= 3 and left_model not in {'unknown','none','module','generic','na','sensor','board','other'}:
@@ -310,10 +327,19 @@ def component_similarity(draft, existing):
     left, right = normalized_words(draft['name']), normalized_words(existing['name'])
     if not left or not right:
         return 0, ''
+    left_functions = sensor_functions(draft['name'])
+    right_functions = sensor_functions(existing['name'])
+    # Shared comparator circuitry is not evidence of the same sensing function.
+    # Exact module models above remain stronger evidence than descriptive wording.
+    if left_functions and right_functions and left_functions.isdisjoint(right_functions):
+        return 0, ''
     if left == right:
         return .98, 'Same name or equivalent electronics terminology'
     shared = left & right
     identifiers = {word for word in shared if re.match(r'^[a-z]+[a-z0-9]*\d[a-z0-9]*$',word)}
+    if 'sensor' in left and 'sensor' in right:
+        # These are common support ICs, not sensor module part numbers.
+        identifiers -= {'lm393', 'lm358', 'ne555'}
     if identifiers:
         return .91, 'Related part identifier: ' + ', '.join(sorted(identifiers))
     families = shared & {'arduino','raspberrypi','stm32','teensy','feather','nucleo'}
