@@ -49,8 +49,9 @@ Existing API routes are `GET /api/components`, `POST /api/components`,
 `GET /api/export.csv`. The UI is served at `/`, with static assets and uploaded
 photos under `/static` and `/uploads`.
 
-SSE synchronization and an initial automated synchronization regression suite are
-implemented on the Phase 1 feature branch. There is no QR generation/scanning,
+SSE synchronization is merged and deployed. Automated API/SSE regression tests
+and browser synchronization tests are implemented; Phase 2 adds broader API
+coverage and CI. There is no QR generation/scanning,
 storage-bin entity, project BOM, quantity allocation model,
 or application backup/restore workflow. CSV export is not a complete backup.
 The README describes a manual stopped-container backup of `data/`.
@@ -71,7 +72,7 @@ to OpenAI and requires a separately configured API key. Suggestions are advisory
 users must verify markings and electrical specifications. HEIC storage exists,
 but conversion for AI identification is not implemented.
 
-## Planned development, in priority order
+## Development phases, in priority order
 
 ### 1. Reliable synchronization — implemented; device verification pending
 
@@ -81,7 +82,8 @@ reload. SQLite remains the source of truth; events should trigger authoritative
 reads rather than become a second inventory store.
 
 Verification covers real HTTP streams and simulated browser lifecycle events.
-Manual Mac/iPhone Safari verification remains pending deployment approval. Events
+The approved Phase 1 deployment passed local read-only HTTP/SSE smoke checks on
+2026-11-11. Manual Mac/iPhone Safari verification remains pending. Events
 are transient invalidations with a 3-second reconnect hint and 15-second comment
 heartbeats. Each connection receives an initial invalidation to recover missed
 changes; no replay log is needed. Notifications use bounded per-client queues and
@@ -102,14 +104,18 @@ Acceptance criteria:
 - Clean up disconnected clients and verify two-browser behavior, including iPhone
   Safari. Document any single-process event delivery assumption.
 
-### 2. Automated API regression tests
+### 2. Automated API regression tests — implemented on the Phase 2 branch
 
-Build repeatable tests using temporary storage and a mocked AI client. Cover CRUD,
-missing records, validation, search/filter behavior, statistics, photo type/size
-limits, CSV content, and AI success/error paths. Include SSE commit notification
-and reconnection coverage. Provide a documented local test command and automate
-the suite in CI. Tests must not read or mutate the owner's live inventory or need
-a real API key.
+Repeatable tests use temporary storage and a mocked AI client. Coverage includes
+CRUD, missing records, validation, combined search/filters, stock threshold
+boundaries, photo formats/size limits and retention, CSV content, AI success/error
+paths, persistence after reinitialization, SSE commit notifications and reconnects,
+and browser lifecycle behavior. README.md documents local commands.
+
+The GitHub Actions workflow runs Python 3.12 API/SSE tests and Node 24 browser
+synchronization tests for pull requests and pushes to main. It uses pinned official
+actions, read-only repository permissions, and no secrets or deployment credentials.
+Tests must never read or mutate live inventory or use a real API key.
 
 ### 3. iPhone camera and AI identification
 

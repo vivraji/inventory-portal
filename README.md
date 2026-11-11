@@ -61,7 +61,8 @@ Event delivery is in memory and requires one Uvicorn worker, matching the curren
 Docker command. This is LAN synchronization, not offline editing or cloud sync.
 Direct database edits do not emit notifications. Concurrent saves still use the
 existing last-write-wins behavior. Real iPhone Safari background/resume verification
-is pending an approved deployment. No deployment is performed by the tests.
+remains pending. Phase 1 was deployed on 2026-11-11 after approval; read-only
+HTTP and SSE smoke checks passed. No deployment is performed by the tests.
 
 ## Development tests
 
@@ -77,6 +78,25 @@ node --test tests/sync.test.cjs
 Python tests copy application source and static assets into a temporary directory
 and start a separate loopback server on an ephemeral port. Only temporary SQLite
 and upload storage is used; the project database, photos, environment files, and
-running deployment are untouched. Tests do not call OpenAI. JavaScript tests cover
-connection lifecycle, fallback refresh, request coalescing, and recovery. Broader
-API regression coverage and CI remain Phase 2 work.
+running deployment are untouched. Tests mock OpenAI and cover CRUD, validation, search and filters, stock statistics,
+photo types and size limits, CSV content, AI success/error paths, persistence, and
+SSE. JavaScript tests cover connection lifecycle, fallback refresh, request
+coalescing, recovery, and preserving filters and unsaved forms. GitHub Actions runs
+both suites for pull requests and pushes to `main`, using Python 3.12 and Node 24.
+The workflow has read-only repository permissions and uses no secrets or deployment
+credentials.
+
+## Phase 1 deployment record
+
+On 2026-11-11, merged commit `18282f5` was built and deployed with owner approval.
+A stopped-service backup of the database and photographs was saved locally under
+`backups/pre-sse-20261111T100703Z/`; SQLite integrity passed. Database, photograph,
+`.env`, Dockerfile, and Compose checksums matched after the update. The former image
+is retained as `inventory-portal-inventory:pre-sse-18282f5`. Backups are ignored by Git.
+
+Read-only checks passed for `/`, `/api/stats`, `/api/docs`, `/static/sync.js`, and the
+initial `/api/events` SSE message. No test inventory records were written to the
+running service. Device verification still requires Mac and iPhone: open both
+browsers, change a record, confirm the other refreshes, and repeat after switching
+Wi-Fi off/on and backgrounding Safari. Check that unsaved forms remain intact.
+Any further deployment or restore still requires explicit owner approval.

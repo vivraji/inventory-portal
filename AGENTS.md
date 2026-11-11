@@ -38,7 +38,8 @@ Inventory lives in `data/inventory.db`; photographs live in `data/uploads/`.
 
 - Work on feature branches, with small reviewable commits and focused changes.
 - Add or update automated tests for behavior changes and run relevant checks.
-  An initial SSE/API regression suite exists; broader API coverage is planned.
+  API and SSE regression suites exist, with mocked AI and isolated storage.
+  GitHub Actions runs Python and JavaScript checks for pull requests and main.
   See README.md for isolated Python and JavaScript test commands.
   Do not report unrun checks as passing.
 - Keep documentation aligned with delivered behavior and distinguish plans from
