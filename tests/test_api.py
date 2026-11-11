@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,7 +48,7 @@ class ApiTests(unittest.TestCase):
         self.mock_claude.return_value.__aenter__.return_value.post = self.claude_post
 
     def create(self, **fields):
-        response = self.client.post('/api/components', json={'name': 'Test board', **fields})
+        response = self.client.post('/api/components?allow_similar=true', json={'name': 'Test board', **fields})
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
@@ -278,6 +279,7 @@ class ApiTests(unittest.TestCase):
         photo.write_bytes(b'original photo')
         original = self.create(image='/uploads/existing.jpg', quantity=7)
         original.pop('image_back')
+        expected_number = original.pop('inventory_number')
         with closing(sqlite3.connect(self.module.DB)) as con:
             columns = [r for r in con.execute('PRAGMA table_info(components)') if r[1] != 'image_back']
         with closing(sqlite3.connect(legacy_root / 'data/inventory.db')) as con:
@@ -293,7 +295,7 @@ class ApiTests(unittest.TestCase):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             with TestClient(module.app) as client:
-                self.assertEqual(client.get('/api/components').json(), [{**original, 'image_back': ''}])
+                self.assertEqual(client.get('/api/components').json(), [{**original, 'image_back': '', 'inventory_number': expected_number}])
             self.assertEqual(photo.read_bytes(), b'original photo')
 
     def mock_claude_response(self, text, status=200):
@@ -486,3 +488,67 @@ class ApiTests(unittest.TestCase):
         for field in self.module.IDENTIFICATION_FIELDS:
             maximum = self.module.Component.model_json_schema()['properties'][field]['maxLength']
             self.assertIn(str(maximum), schema['properties'][field]['description'])
+
+    def test_inventory_numbers_are_searchable_exported_and_never_reused(self):
+        first = self.create(name='First component')
+        second = self.create(name='Second component')
+        self.assertEqual(first['inventory_number'],'INV-000001')
+        self.assertEqual(second['inventory_number'],'INV-000002')
+        self.client.delete('/api/components/' + second['id'])
+        third = self.create(name='Third component',inventory_number='SPOOFED')
+        self.assertEqual(third['inventory_number'],'INV-000003')
+        rows = self.client.get('/api/components',params={'q':'INV-000001'}).json()
+        self.assertEqual([row['id'] for row in rows],[first['id']])
+        exported = list(csv.DictReader(io.StringIO(self.client.get('/api/export.csv').text)))
+        self.assertEqual({row['inventory_number'] for row in exported},{'INV-000001','INV-000003'})
+
+    def test_same_part_warning_requires_explicit_confirmation_without_mutating_stock(self):
+        existing = self.create(name='ESP32 development board',model='ESP32-S3',quantity=5)
+        draft = {'name':'Wireless MCU module','model':'ESP32 S3','quantity':2}
+        matches = self.client.post('/api/components/similar',json=draft).json()['matches']
+        self.assertEqual(matches[0]['inventory_number'],existing['inventory_number'])
+        response = self.client.post('/api/components',json=draft)
+        self.assertEqual(response.status_code,409)
+        self.assertEqual(response.json()['detail']['code'],'similar_components')
+        self.assertEqual(len(self.client.get('/api/components').json()),1)
+        confirmed = self.client.post('/api/components?allow_similar=true',json=draft)
+        self.assertEqual(confirmed.status_code,201)
+        self.assertEqual(confirmed.json()['inventory_number'],'INV-000002')
+        stored = {row['id']:row for row in self.client.get('/api/components').json()}
+        self.assertEqual(stored[existing['id']]['quantity'],5)
+        self.assertEqual(stored[confirmed.json()['id']]['quantity'],2)
+
+    def test_semantic_electronics_terms_and_distinct_values(self):
+        for left,right in [('Thermal probe','Temperature sensor'),('LED','Light-emitting diode'),
+                           ('ESP32 development board','ESP32 dev module'),('10k resistor','10000 ohm resistor'),
+                           ('Arduino Uno','Arduino Mega')]:
+            with self.subTest(left=left,right=right):
+                existing = self.create(name=left)
+                matches = self.client.post('/api/components/similar',json={'name':right}).json()['matches']
+                self.assertIn(existing['id'],[match['id'] for match in matches])
+                self.client.delete('/api/components/'+existing['id'])
+        self.create(name='10k resistor')
+        self.assertEqual(self.client.post('/api/components/similar',json={'name':'1k resistor'}).json()['matches'],[])
+        self.assertEqual(self.client.post('/api/components',json={'name':'1k resistor'}).status_code,201)
+
+    def test_similarity_excludes_self_and_does_not_block_ordinary_stock_edits(self):
+        first = self.create(name='Temperature sensor',quantity=1)
+        second = self.create(name='USB connector')
+        matches = self.client.post('/api/components/similar',params={'exclude_id':first['id']},
+                                   json={'name':'Temperature sensor'}).json()['matches']
+        self.assertEqual(matches,[])
+        updated = self.client.put('/api/components/'+first['id'],json={'name':'Temperature sensor','quantity':9})
+        self.assertEqual(updated.status_code,200)
+        self.assertEqual(updated.json()['inventory_number'],first['inventory_number'])
+        duplicate = self.client.put('/api/components/'+second['id'],json={'name':'Thermal probe'})
+        self.assertEqual(duplicate.status_code,409)
+        unchanged = next(row for row in self.client.get('/api/components').json() if row['id']==second['id'])
+        self.assertEqual(unchanged['name'],'USB connector')
+
+    def test_simultaneous_duplicate_saves_are_serialized(self):
+        def save():
+            return self.client.post('/api/components',json={'name':'ESP32 development board'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = list(pool.map(lambda _:save(),range(2)))
+        self.assertEqual(sorted(statuses),[201,409])
+        self.assertEqual(len(self.client.get('/api/components').json()),1)
