@@ -6,6 +6,8 @@ import json
 import os
 import sqlite3
 import uuid
+
+import httpx
 from threading import Lock
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -91,6 +94,9 @@ with db() as con:
       image TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     ''')
+    # Additive, repeatable migration: existing image references and records survive.
+    if 'image_back' not in {row['name'] for row in con.execute('PRAGMA table_info(components)')}:
+        con.execute("ALTER TABLE components ADD COLUMN image_back TEXT NOT NULL DEFAULT ''")
 
 class Component(BaseModel):
     name: str = Field(min_length=1, max_length=180)
@@ -106,6 +112,7 @@ class Component(BaseModel):
     datasheet: str = Field(default='', max_length=1000)
     notes: str = Field(default='', max_length=5000)
     image: str = Field(default='', max_length=300)
+    image_back: str = Field(default='', max_length=300)
 
 FIELDS = list(Component.model_fields)
 
@@ -165,7 +172,10 @@ def create_component(component: Component):
 def update_component(ident: str, component: Component):
     values = component.model_dump()
     with db() as con:
-        get_component(con, ident)
+        old = get_component(con, ident)
+        # Older clients know only the front image; retain the back unless explicit.
+        if 'image_back' not in component.model_fields_set:
+            values['image_back'] = old['image_back']
         con.execute('UPDATE components SET ' + ','.join(f'{k}=?' for k in FIELDS) + ',updated_at=? WHERE id=?', [values[k] for k in FIELDS] + [now(),ident])
         result = get_component(con, ident)
     events.publish()
@@ -193,28 +203,90 @@ async def upload(file: UploadFile = File(...)):
     return {'image': '/uploads/' + name}
 
 @app.post('/api/identify')
-async def identify(file: UploadFile = File(...)):
+async def identify(file: UploadFile | None = File(default=None),
+                   files: list[UploadFile] | None = File(default=None)):
     key = os.environ.get('OPENAI_API_KEY', '').strip()
+    claude_key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
+    if not key and not claude_key:
+        raise HTTPException(503, 'Configure ANTHROPIC_API_KEY for Claude and OPENAI_API_KEY for backup')
+    photos = ([file] if file else []) + (files or [])
+    if not 1 <= len(photos) <= 6:
+        raise HTTPException(422, 'Choose between 1 and 6 identification photos')
+    images = []
+    total = 0
+    for photo in photos:
+        if photo.content_type not in {'image/jpeg', 'image/png', 'image/webp'}:
+            raise HTTPException(415, 'For AI identification, use JPG, PNG, or WebP')
+        content = await photo.read(10 * 1024 * 1024 + 1)
+        total += len(content)
+        if len(content) > 10 * 1024 * 1024 or total > 20 * 1024 * 1024:
+            raise HTTPException(413, 'Maximum 10 MB per photo and 20 MB total for identification')
+        if not content:
+            raise HTTPException(422, 'Identification photos must not be empty')
+        images.append({'type': 'image_url', 'image_url': {
+            'url': f'data:{photo.content_type};base64,{base64.b64encode(content).decode()}'}})
+    system = ('Identify electronic hobby components from photos. Return only a JSON object with '
+              'keys name, category, manufacturer, model, notes, confidence (high/medium/low), uncertainty. '
+              'Only state visible or confidently identifiable markings/specifications. Do not invent '
+              'datasheet links, voltage, pinout, or manufacturer. If unclear, give a generic name and '
+              'say what additional photo is needed. Use notes for useful visible markings, '
+              'interfaces and identifying features. Never infer stock counts, storage location, '
+              'project allocation, vendor or purchase price from the photos.')
+    prompt = ('These photos show the same component from different sides or magnifications. '
+              'Combine visible evidence across all photos. Report conflicting markings or uncertainty.')
+    fallback_reason = 'claude_not_configured'
+    if claude_key:
+        try:
+            blocks = []
+            for image in images:
+                header, data = image['image_url']['url'].split(',', 1)
+                blocks.append({'type': 'image', 'source': {'type': 'base64',
+                    'media_type': header[5:].split(';')[0], 'data': data}})
+            headers = {'Authorization': 'Bearer ' + claude_key, 'anthropic-version': '2026-10-21'}
+            workspace = os.environ.get('ANTHROPIC_WORKSPACE_ID', '').strip()
+            if workspace:
+                headers['anthropic-workspace-id'] = workspace
+            async with httpx.AsyncClient(timeout=35) as client:
+                response = await client.post('https://api.anthropic.com/v1/messages',
+                    headers=headers, json={
+                        'model': os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
+                        'max_tokens': 1024, 'system': system,
+                        'messages': [{'role': 'user', 'content': [*blocks, {'type': 'text', 'text': prompt}]}]})
+                response.raise_for_status()
+                text = ''.join(part.get('text', '') for part in response.json()['content'] if part.get('type') == 'text')
+            return identification_result(text, 'claude', '')
+        except Exception:
+            # Do not expose provider responses, keys, or request/photo contents.
+            fallback_reason = 'claude_unavailable'
     if not key:
-        raise HTTPException(503, 'Add OPENAI_API_KEY to .env and restart to enable AI identification')
-    allowed = {'image/jpeg','image/png','image/webp'}
-    if file.content_type not in allowed:
-        raise HTTPException(415, 'For AI identification, use JPG, PNG, or WebP')
-    content = await file.read(10 * 1024 * 1024 + 1)
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(413, 'Maximum photo size is 10 MB')
+        raise HTTPException(502, 'Claude identification failed; OpenAI backup is not configured')
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=key, timeout=35)
-        result = client.chat.completions.create(
+        client = OpenAI(api_key=key, timeout=35, max_retries=0)
+        result = await run_in_threadpool(client.chat.completions.create,
             model=os.environ.get('OPENAI_MODEL', 'gpt-4.1-mini'),
-            response_format={'type':'json_object'},
-            messages=[{'role':'system','content':('Identify electronic hobby components from photos. Return JSON object with keys name, category, manufacturer, model, notes, confidence (high/medium/low), uncertainty. Only state markings/specifications visible or confidently identifiable; do not invent datasheet links, voltage, pinout, or manufacturer. If unclear, use generic component name and say what additional photo is needed.')},
-            {'role':'user','content':[{'type':'text','text':'Identify this electronic component for a personal inventory. Provide a cautious identification.'}, {'type':'image_url','image_url':{'url':f'data:{file.content_type};base64,{base64.b64encode(content).decode()}'}}]}],
+            response_format={'type': 'json_object'},
+            messages=[{'role': 'system', 'content': system},
+                      {'role': 'user', 'content': [{'type': 'text', 'text': prompt}, *images]}],
             max_tokens=450)
-        return json.loads(result.choices[0].message.content)
+        return identification_result(result.choices[0].message.content, 'openai', fallback_reason)
     except Exception as exc:
-        raise HTTPException(502, f'AI identification unavailable: {type(exc).__name__}') from exc
+        raise HTTPException(502, 'AI identification unavailable; please retry later') from exc
+
+
+def identification_result(text, provider, fallback_reason):
+    text = text.strip()
+    if text.startswith('```') and text.endswith('```'):
+        text = text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
+    result = json.loads(text)
+    if not isinstance(result, dict) or not isinstance(result.get('name'), str) or not result['name'].strip():
+        raise ValueError('Invalid identification response')
+    for field in ['category', 'manufacturer', 'model', 'notes', 'confidence', 'uncertainty']:
+        if field in result and not isinstance(result[field], str):
+            raise ValueError('Invalid identification field')
+    result['provider'] = provider
+    result['fallback_reason'] = fallback_reason
+    return result
 
 @app.get('/api/export.csv')
 def export_csv():
