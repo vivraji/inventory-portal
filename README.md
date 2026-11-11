@@ -251,9 +251,9 @@ API, SSE, private log routing and LAN access. No live AI identification was run
 for verification; logs are created on the next identification attempt. Further
 deployments and restores still require explicit owner approval.
 
-## Responsive layout checks (feature branch; deployment pending)
+## Responsive layout checks
 
-The mobile-layout branch keeps the dashboard, forms, file controls, photo previews,
+The mobile layout keeps the dashboard, forms, file controls, photo previews,
 long AI messages, error messages, and toasts inside the available viewport. Layouts
 use shrinkable grid/flex tracks and wrapping text instead of hiding horizontal
 overflow. The scrolling modal tracks `visualViewport` resize/scroll events so its
@@ -277,6 +277,16 @@ sizes from 320px phones to desktop, open-form rotation, long metadata/status tex
 photo controls, reachable Save/Cancel actions, and simulated keyboard/zoom viewport
 changes. These engine tests do not replace a physical iPhone Safari check.
 
-The same pending update sets the default low-stock threshold to 1 for new records
-and forms; existing thresholds, including 0, are preserved. These changes require
-an approved deployment before they appear on the running portal.
+New records and forms default to a low-stock threshold of 1; existing thresholds,
+including 0, are preserved. These changes were deployed with owner approval on
+2026-11-11. Further deployments still require explicit approval.
+
+## Mobile layout deployment record
+
+Merged commit `8252d2f` was deployed with owner approval on 2026-11-11. A consistent
+local backup is retained at `backups/pre-mobile-layout-20261111T185359Z/`; the previous
+image is tagged `inventory-portal-inventory:pre-mobile-layout`. Database/data/photo,
+`.env`, and Docker-file checksums matched after deployment. All 53 tests and CI
+passed before deployment. Built-image checks and live read-only checks confirmed
+the responsive assets, form/API default of 1, inventory, SSE, and home-network
+access. Physical iPhone Safari verification remains a user device check.

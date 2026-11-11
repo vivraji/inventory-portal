@@ -232,14 +232,14 @@ CI and live read-only UI/API/SSE/LAN checks passed. A consistent local backup an
 previous image were retained. Post-deployment checksums matched all existing
 inventory data, photographs, environment settings and Docker configuration.
 
-## Low-stock default — feature branch, deployment pending
+## Low-stock default — implemented and deployed
 
 New component forms and API-created records default to a low-stock threshold of 1.
 Existing records retain their thresholds, including an explicit 0 to disable alerts.
 Edits omitting the threshold preserve its stored value. This change does not rewrite
 existing SQLite defaults or inventory records; the API supplies the new-record value.
 
-## Responsive viewport behavior — feature branch, deployment pending
+## Responsive viewport behavior — implemented and deployed
 
 Keep dashboard and modal content within the visible viewport at phone, tablet and
 desktop widths. Grid/flex descendants must shrink; long AI metadata, diagnostic
@@ -255,4 +255,10 @@ rotate open forms. They check root/modal/control overflow, long status and error
 text, photo selection, preserved unsaved values, toasts, and simulated keyboard/
 zoom viewport changes. CI runs these alongside API and JavaScript regression tests.
 The app remains vanilla JavaScript/CSS without a frontend build step. Physical
-Safari keyboard behavior still needs device verification after approved deployment.
+Safari keyboard behavior still needs device verification.
+
+The responsive UI and new-record threshold default were deployed with owner approval
+on 2026-11-11 using merged commit `8252d2f`. All 53 tests and CI passed. A consistent
+backup and previous image were retained, protected-file checksums matched after
+the update, and live read-only asset/API/SSE/LAN checks passed. Existing thresholds
+and inventory records were preserved.
