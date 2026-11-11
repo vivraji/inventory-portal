@@ -169,6 +169,22 @@ class Component(BaseModel):
     image_back: str = Field(default='', max_length=300)
 
 FIELDS = list(Component.model_fields)
+IDENTIFICATION_FIELDS = ['name', 'category', 'manufacturer', 'model', 'notes']
+METADATA_PROPERTIES = {key: value for key, value in Component.model_json_schema()['properties'].items()
+                       if key in IDENTIFICATION_FIELDS}
+
+def identification_schema():
+    # Use the portable schema subset supported by both providers. Length constraints
+    # remain authoritative in Component; include them as instructions and validate locally.
+    properties = {}
+    for key, field in METADATA_PROPERTIES.items():
+        properties[key] = {'type': 'string', 'description':
+            f"Maximum {field['maxLength']} characters. " +
+            ('Use a concise generic name if uncertain.' if key == 'name' else 'Use an empty string if unknown.')}
+    properties['confidence'] = {'type': 'string', 'enum': ['high', 'medium', 'low', 'unknown']}
+    properties['uncertainty'] = {'type': 'string', 'description': 'Explain uncertainty or missing evidence, at most 2000 characters.'}
+    return {'type': 'object', 'properties': properties,
+            'required': list(properties), 'additionalProperties': False}
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -296,7 +312,10 @@ async def identify(file: UploadFile | None = File(default=None),
               'datasheet links, voltage, pinout, or manufacturer. If unclear, give a generic name and '
               'say what additional photo is needed. Use notes for useful visible markings, '
               'interfaces and identifying features. Never infer stock counts, storage location, '
-              'project allocation, vendor or purchase price from the photos.')
+              'project allocation, vendor or purchase price from the photos. Return every requested '
+              'field; use empty strings for unknown metadata, never invented values. Keep name '
+              'and part number concise. Put supporting detail in notes. Field requirements: ' +
+              json.dumps(identification_schema()))
     prompt = ('These photos show the same component from different sides or magnifications. '
               'Combine visible evidence across all photos. Report conflicting markings or uncertainty.')
     fallback_reason = 'claude_not_configured'
@@ -320,6 +339,7 @@ async def identify(file: UploadFile | None = File(default=None),
                     headers=headers, json={
                         'model': os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
                         'max_tokens': 1024, 'system': system,
+                        'output_config': {'format': {'type': 'json_schema', 'schema': identification_schema()}},
                         'messages': [{'role': 'user', 'content': [*blocks, {'type': 'text', 'text': prompt}]}]})
                 audit('claude', 'response', http_status=response.status_code,
                       elapsed_ms=round((time.monotonic() - started) * 1000),
@@ -345,7 +365,8 @@ async def identify(file: UploadFile | None = File(default=None),
         client = OpenAI(api_key=key, timeout=35, max_retries=0)
         result = await run_in_threadpool(client.chat.completions.create,
             model=os.environ.get('OPENAI_MODEL', 'gpt-4.1-mini'),
-            response_format={'type': 'json_object'},
+            response_format={'type': 'json_schema', 'json_schema': {
+                'name': 'component_identification', 'strict': True, 'schema': identification_schema()}},
             messages=[{'role': 'system', 'content': system},
                       {'role': 'user', 'content': [{'type': 'text', 'text': prompt}, *images]}],
             max_tokens=450)
@@ -373,9 +394,26 @@ def identification_result(text, provider, fallback_reason):
     for field in ['category', 'manufacturer', 'model', 'notes', 'confidence', 'uncertainty']:
         if field in result and not isinstance(result[field], str):
             raise ValueError('Invalid identification field')
-    result['provider'] = provider
-    result['fallback_reason'] = fallback_reason
-    return result
+    metadata = {field: result.get(field, '').strip() for field in IDENTIFICATION_FIELDS}
+    full_suggestions = []
+    for field in ['name', 'category', 'manufacturer', 'model']:
+        maximum = METADATA_PROPERTIES[field]['maxLength']
+        if len(metadata[field]) > maximum:
+            full_suggestions.append(f'{field} (full AI suggestion): {metadata[field]}')
+            metadata[field] = metadata[field][:maximum].rstrip()
+    metadata['notes'] = '\n\n'.join([value for value in [metadata['notes'], *full_suggestions] if value])
+    # Every response sent to the UI must already satisfy the inventory save model.
+    validated = Component(**metadata).model_dump()
+    confidence = result.get('confidence', 'unknown').strip().lower() or 'unknown'
+    if confidence not in {'high', 'medium', 'low', 'unknown'}:
+        raise ValueError('Invalid confidence')
+    uncertainty = result.get('uncertainty', '').strip()
+    if len(uncertainty) > 2000:
+        raise ValueError('Uncertainty exceeds limit')
+    return {**{field: validated[field] for field in IDENTIFICATION_FIELDS},
+            'confidence': confidence, 'uncertainty': uncertainty,
+            'provider': provider, 'fallback_reason': fallback_reason,
+            'metadata_warnings': ['Long labels were shortened; full suggestions are preserved in notes.'] if full_suggestions else []}
 
 @app.get('/api/export.csv')
 def export_csv():

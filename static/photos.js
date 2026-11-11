@@ -1,11 +1,59 @@
-// Only descriptive metadata is suggested. Stock and organization stay user-controlled.
+const COMPONENT_TEXT_LIMITS = {name: 180, category: 80, manufacturer: 120, model: 120,
+    location: 120, project: 120, vendor: 120, datasheet: 1000, notes: 5000};
+const COMPONENT_LABELS = {name: 'Component name', category: 'Category', manufacturer: 'Manufacturer',
+    model: 'Model / part number', location: 'Storage location', project: 'Project', vendor: 'Vendor',
+    datasheet: 'Datasheet URL', notes: 'Notes', quantity: 'Quantity', min_quantity: 'Low-stock threshold', price: 'Unit price'};
+
+function formatApiError(payload, status) {
+    if (typeof payload?.detail === 'string') return payload.detail;
+    if (Array.isArray(payload?.detail)) {
+        const messages = payload.detail.map(issue => {
+            const path = Array.isArray(issue.loc) ? issue.loc.filter(p => p !== 'body') : [];
+            const field = path[0];
+            return (COMPONENT_LABELS[field] || field || 'Form') + ': ' + (issue.msg || 'Invalid value');
+        });
+        if (messages.length) return messages.join('; ');
+    }
+    return 'Request failed (' + status + ')';
+}
+
+function componentFormErrors(form) {
+    const errors = [];
+    for (const [key, max] of Object.entries(COMPONENT_TEXT_LIMITS)) {
+        const value = String(form.elements.namedItem(key)?.value || '').trim();
+        if (key === 'name' && !value) errors.push('Enter a component name.');
+        const length = Array.from(value).length;
+        if (length > max) errors.push(COMPONENT_LABELS[key] + ' must be at most ' + max + ' characters (currently ' + length + ').');
+    }
+    for (const key of ['quantity','min_quantity','price']) {
+        const field = form.elements.namedItem(key);
+        const value = Number(field?.value);
+        if (!field || !String(field.value).trim() || !Number.isFinite(value) || value < 0 ||
+            (key !== 'price' && !Number.isInteger(value)))
+            errors.push(COMPONENT_LABELS[key] + ' must be a non-negative ' + (key === 'price' ? 'number.' : 'whole number.'));
+    }
+    return errors;
+}
+
+// Preserve long AI labels in notes rather than sending invalid fields or losing text.
 function prefillComponentMetadata(form, suggestion) {
-    const filled = [];
-    for (const key of ['name', 'category', 'manufacturer', 'model', 'notes']) {
+    const filled = [], fullSuggestions = [];
+    for (const key of ['name', 'category', 'manufacturer', 'model']) {
         const field = form.elements.namedItem(key);
         if (field && typeof suggestion[key] === 'string' && suggestion[key].trim()) {
-            field.value = suggestion[key].trim();
+            const value = suggestion[key].trim();
+            if (Array.from(value).length > COMPONENT_TEXT_LIMITS[key])
+                fullSuggestions.push(COMPONENT_LABELS[key] + ' (full AI suggestion): ' + value);
+            field.value = Array.from(value).slice(0, COMPONENT_TEXT_LIMITS[key]).join('').trimEnd();
             filled.push(key);
+        }
+    }
+    const notes = form.elements.namedItem('notes');
+    if (notes) {
+        const suggested = typeof suggestion.notes === 'string' ? suggestion.notes.trim() : '';
+        if (suggested || fullSuggestions.length) {
+            notes.value = [suggested || notes.value, ...fullSuggestions].filter(Boolean).join('\n\n');
+            filled.push('notes');
         }
     }
     return filled;

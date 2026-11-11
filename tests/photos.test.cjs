@@ -14,7 +14,8 @@ function setup(existing = {}) {
         }
     });
     vm.runInContext(fs.readFileSync('static/photos.js', 'utf8'), context);
-    return {editor: context.createPhotoEditor(), prefill: context.prefillComponentMetadata, revoked, fetched};
+    return {editor: context.createPhotoEditor(), prefill: context.prefillComponentMetadata,
+        errors: context.componentFormErrors, formatError: context.formatApiError, revoked, fetched};
 }
 const photo = (name, size = 10, type = 'image/jpeg') => ({name, size, type});
 
@@ -131,4 +132,65 @@ test('missing, empty, or invalid AI metadata does not clear existing fields', ()
     assert.equal(fields.name.value, 'New name');
     assert.equal(fields.manufacturer.value, 'Known maker');
     assert.equal(fields.notes.value, 'My notes');
+});
+
+function formFixture(overrides = {}) {
+    const values = {name:'Board', category:'Other', manufacturer:'', model:'', notes:'',
+        location:'', project:'', vendor:'', datasheet:'', quantity:'1', min_quantity:'0', price:'0', ...overrides};
+    const fields = Object.fromEntries(Object.entries(values).map(([key,value]) => [key,{value}]));
+    return {fields, form:{elements:{namedItem:key => fields[key]}}};
+}
+
+test('long AI labels fit API limits while complete suggestions are preserved in notes', () => {
+    const h = setup(), {fields, form} = formFixture({notes:'My existing note'});
+    const suggestion = {name:'N'.repeat(200), category:'C'.repeat(95),
+        manufacturer:'M'.repeat(130), model:'Part description '.repeat(15)};
+    h.prefill(form, suggestion);
+    assert.equal(fields.name.value.length, 180);
+    assert.equal(fields.category.value.length, 80);
+    assert.equal(fields.manufacturer.value.length, 120);
+    assert.ok(fields.model.value.length <= 120);
+    for (const value of Object.values(suggestion)) assert.ok(fields.notes.value.includes(value.trim()));
+    assert.ok(fields.notes.value.includes('My existing note'));
+    assert.equal(h.errors(form).length, 0);
+});
+
+test('oversized notes stay intact and get an actionable validation message', () => {
+    const h = setup(), {fields, form} = formFixture();
+    h.prefill(form, {name:'Board', notes:'n'.repeat(5001)});
+    assert.equal(fields.notes.value.length, 5001);
+    assert.match(h.errors(form)[0], /Notes must be at most 5000 characters/);
+});
+
+test('local form checks report whitespace names, long fields and invalid quantities', () => {
+    const h = setup();
+    for (const [overrides, message] of [[{name:'   '}, /component name/],
+        [{model:'x'.repeat(121)}, /Model \/ part number.*120/],
+        [{location:'x'.repeat(121)}, /Storage location.*120/],
+        [{quantity:'1.5'}, /Quantity.*whole number/], [{min_quantity:'-1'}, /Low-stock threshold/],
+        [{price:'Infinity'}, /Unit price/], [{quantity:''}, /Quantity/]]) {
+        assert.match(h.errors(formFixture(overrides).form).join(' '), message);
+    }
+});
+
+test('API validation details show the field and constraint without echoing submitted values', () => {
+    const {formatError} = setup();
+    const message = formatError({detail:[
+        {loc:['body','model'],msg:'String should have at most 120 characters',input:'private input'},
+        {loc:['body','notes'],msg:'String should have at most 5000 characters',input:'private notes'}]},422);
+    assert.match(message,/Model \/ part number:.*120 characters/);
+    assert.match(message,/Notes:.*5000 characters/);
+    assert.doesNotMatch(message,/private/);
+    assert.equal(formatError({detail:'Maximum photo size is 10 MB'},413),'Maximum photo size is 10 MB');
+    assert.equal(formatError(undefined,500),'Request failed (500)');
+});
+
+test('AI label shortening preserves Unicode characters at the server limit', () => {
+    const h = setup(), {fields, form} = formFixture();
+    const full = 'n'.repeat(179) + '🔌' + ' extra';
+    h.prefill(form,{name:full});
+    assert.equal(Array.from(fields.name.value).length,180);
+    assert.ok(fields.name.value.endsWith('🔌'));
+    assert.ok(fields.notes.value.includes(full));
+    assert.equal(h.errors(form).length,0);
 });

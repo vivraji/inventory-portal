@@ -198,3 +198,40 @@ in total); long response fields are truncated at 64 KiB. API keys, request heade
 photo contents/base64 data, and original filenames are excluded or redacted.
 Logging failure must not cause a successful Claude result to fall back to OpenAI.
 This change does not make live API calls or deploy itself.
+
+## AI metadata validation and save errors (feature branch)
+
+The diagnostics branch also fixes hidden save-validation failures. Both providers
+receive the same required JSON fields: name, category, manufacturer, model, notes,
+confidence, and uncertainty, with no additional fields requested. The schema is
+built from the inventory model. Provider schemas use the portable supported
+subset; length limits are described in the request and enforced on the server.
+Structured output alone does not establish factual correctness.
+
+| Field | Maximum characters |
+| --- | --- |
+| Name | 180 |
+| Category | 80 |
+| Manufacturer / model | 120 each |
+| Notes | 5000 |
+| Uncertainty | 2000 |
+
+The server validates every usable AI response before prefilling. Unknown metadata
+is returned as blank text; confidence must be high, medium, low, or unknown. Stock
+counts, locations, projects, vendors, prices, and datasheets are not inferred.
+Overlong AI labels are shortened to fit and their complete text is preserved in
+notes, with a visible warning. If notes still exceed the limit or the data is
+invalid, the response is rejected rather than silently losing information. Claude
+validation failures can trigger the OpenAI backup and are recorded in diagnostics.
+
+The form independently validates text lengths and quantities before uploading
+photos or saving. Oversized notes remain visible for editing. A server 422 response
+shows the field and constraint in a persistent message instead of only “Request
+failed (422)”. Failed saves retain the form and selected photo references for retry.
+The original rejected request was not recorded, so the exact field behind that
+past 422 is not known; oversized AI labels are a reproduced failure path.
+
+Structured output formats follow the official
+[Claude](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+and [OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs)
+documentation. These fixes await deployment approval.

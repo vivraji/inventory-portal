@@ -425,3 +425,54 @@ class ApiTests(unittest.TestCase):
         self.assertIn('Rate limit', error['response'])
         self.assertNotIn('fake-openai', error['response'])
         self.assertNotIn('fake-openai', response.text)
+
+    def test_ai_long_labels_return_saveable_metadata_without_losing_original_text(self):
+        original = {'name': 'N' * 201, 'category': 'C' * 90,
+                    'manufacturer': 'M' * 130, 'model': 'Part number ' * 20,
+                    'notes': 'Visible markings', 'confidence': 'high', 'uncertainty': ''}
+        self.mock_claude_response(json.dumps(original))
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude'}):
+            response = self.photo('/api/identify')
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result['provider'], 'claude')
+        self.assertTrue(result['metadata_warnings'])
+        for field, maximum in [('name',180), ('category',80), ('manufacturer',120), ('model',120)]:
+            self.assertLessEqual(len(result[field]), maximum)
+            self.assertIn(original[field].strip(), result['notes'])
+        # Exercise the actual save endpoint using the returned descriptive fields.
+        saved = self.client.post('/api/components', json={key: result[key] for key in self.module.IDENTIFICATION_FIELDS})
+        self.assertEqual(saved.status_code, 201, saved.text)
+        self.mock_ai.assert_not_called()
+
+    def test_ai_response_fills_unknown_fields_but_never_infers_inventory_quantities(self):
+        result = self.module.identification_result('{"name":"Board","quantity":99,"location":"invented"}', 'claude', '')
+        for field in ['category','manufacturer','model','notes','uncertainty']:
+            self.assertEqual(result[field], '')
+        self.assertEqual(result['confidence'], 'unknown')
+        self.assertNotIn('quantity', result)
+        self.assertNotIn('location', result)
+        for response in [{'name':'Board','notes':'n' * 5001}, {'name':'Board','confidence':'certain'},
+                         {'name':'Board','uncertainty':'u' * 2001}]:
+            with self.subTest(fields=list(response)):
+                with self.assertRaises(ValueError):
+                    self.module.identification_result(json.dumps(response), 'claude', '')
+
+    def test_both_providers_receive_the_same_complete_structured_schema(self):
+        self.mock_claude_response('invalid JSON')
+        self.mock_ai.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"name":"Board"}'))])
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY':'fake-claude', 'OPENAI_API_KEY':'fake-openai'}):
+            self.assertEqual(self.photo('/api/identify').status_code, 200)
+        claude = self.claude_post.call_args.kwargs['json']['output_config']['format']
+        openai = self.mock_ai.return_value.chat.completions.create.call_args.kwargs['response_format']
+        self.assertEqual(claude['type'], 'json_schema')
+        self.assertEqual(openai['type'], 'json_schema')
+        self.assertTrue(openai['json_schema']['strict'])
+        self.assertEqual(claude['schema'], openai['json_schema']['schema'])
+        schema = claude['schema']
+        self.assertEqual(set(schema['required']), set(schema['properties']))
+        self.assertFalse(schema['additionalProperties'])
+        for field in self.module.IDENTIFICATION_FIELDS:
+            maximum = self.module.Component.model_json_schema()['properties'][field]['maxLength']
+            self.assertIn(str(maximum), schema['properties'][field]['description'])
