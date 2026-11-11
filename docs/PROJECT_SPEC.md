@@ -190,3 +190,38 @@ full backup or commit backup artifacts to Git.
 Public hosting, cloud sync, and multi-user accounts are outside the current
 delivery scope. Exact future schemas, SSE protocol details, label formats, and
 allocation semantics remain implementation decisions to document with each feature.
+
+## Local AI diagnostics — implemented on feature branch, deployment pending
+
+The AI-diagnostics branch stores bounded JSON-line response diagnostics under
+`data/logs/ai-identification.jsonl`, with a shared request/log ID for Claude and
+OpenAI attempts. The browser shows the ID and a safe fallback reason; raw provider
+responses remain local to the Mac. Capture response text, status, timing, model,
+photo count, failure classification, and provider selection. Never log API keys,
+request headers, photo bytes/base64, or original upload filenames. Responses can
+contain component details and are private inventory data; logs are not served by
+an API or static mount. Owner-only files rotate at 2 MiB with three backups;
+individual response fields are capped at 64 KiB. Diagnostics failures must not
+change provider selection. Automated tests cover fallback order, successful
+Claude responses, redaction, file permissions, bounded output, rotation, and I/O
+failure. Historical responses from before deployment are unavailable.
+
+## AI metadata contract and save validation — feature branch, deployment pending
+
+Both providers receive the same required structured JSON fields for descriptive
+metadata, confidence and uncertainty. The inventory model supplies field limits:
+name 180, category 80, manufacturer/model 120 each, notes 5000; uncertainty is
+limited to 2000. Portable provider schemas specify structure and describe limits;
+the server enforces types, confidence values and lengths using the inventory model.
+Unknown descriptive fields become empty strings, and inventory quantities and
+organization are excluded. Long AI labels are shortened while preserving their
+complete text in notes; if the combined notes exceed the limit, reject the response
+and follow the existing fallback/error path. A valid schema does not prove the
+component identification is correct; user review remains required.
+
+Client checks prevent invalid text lengths or quantities from reaching uploads or
+save requests. A persistent message names fields rejected by server validation,
+without displaying the submitted input from the error payload. Unsaved form data
+and successfully uploaded photo references remain available for correction and
+retry. Tests reproduce oversized AI labels and verify that the normalized metadata
+can be saved through the real API.

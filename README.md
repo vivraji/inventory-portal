@@ -148,7 +148,8 @@ may not preview in every browser. Physical iPhone verification remains pending.
 
 Claude request formatting follows the [official vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
 and [API authentication requirements](https://platform.claude.com/docs/en/api/overview).
-Provider keys and responses are not logged or included in client error messages.
+Provider keys are never logged or included in client error messages. The
+AI-diagnostics feature branch adds private local response logging as described below.
 
 AI identification automatically prefills the component name, category, manufacturer,
 model/part number, and notes when those values are returned. Useful visible markings
@@ -156,3 +157,81 @@ and identifying features go in notes. Empty or absent suggestions do not clear
 existing values. Stock counts, storage location, project, vendor, price, and datasheet
 remain user-controlled. Review the suggestions and press **Save component** to
 persist them; identifying alone does not create or update inventory records.
+
+## AI diagnostics (feature branch; not deployed yet)
+
+`feat/ai-diagnostics` records each identification attempt in
+`data/logs/ai-identification.jsonl` on the Mac. Entries share the log ID returned
+by the API and shown below the identification result. They include provider/model,
+photo count, response timing, Claude HTTP status and request ID, provider response
+text, selection, and the reason an attempt failed or OpenAI was started. HTTP
+errors, timeouts, invalid JSON, and unusable structured responses are distinguished.
+Past attempts made before this feature was deployed cannot be reconstructed.
+
+After an approved deployment, follow the log from the project directory:
+
+```sh
+tail -f data/logs/ai-identification.jsonl
+```
+
+Or show the most recent entries with indentation:
+
+```sh
+python3 - <<'PYLOG'
+import json
+from collections import deque
+from pathlib import Path
+path = Path('data/logs/ai-identification.jsonl')
+if not path.exists():
+    raise SystemExit('No diagnostic log yet. Run Identify with AI after deployment.')
+with path.open() as stream:
+    for line in deque(stream, maxlen=12):
+        print(json.dumps(json.loads(line), indent=2, ensure_ascii=False))
+PYLOG
+```
+
+These logs contain AI-generated descriptions and provider error responses, so treat
+them as private inventory data. They are not served over HTTP and are ignored by
+Git with the rest of `data/`. Files are created with owner-only read/write access.
+Each file rotates at approximately 2 MiB, retaining three older files (about 8 MiB
+in total); long response fields are truncated at 64 KiB. API keys, request headers,
+photo contents/base64 data, and original filenames are excluded or redacted.
+Logging failure must not cause a successful Claude result to fall back to OpenAI.
+This change does not make live API calls or deploy itself.
+
+## AI metadata validation and save errors (feature branch)
+
+The diagnostics branch also fixes hidden save-validation failures. Both providers
+receive the same required JSON fields: name, category, manufacturer, model, notes,
+confidence, and uncertainty, with no additional fields requested. The schema is
+built from the inventory model. Provider schemas use the portable supported
+subset; length limits are described in the request and enforced on the server.
+Structured output alone does not establish factual correctness.
+
+| Field | Maximum characters |
+| --- | --- |
+| Name | 180 |
+| Category | 80 |
+| Manufacturer / model | 120 each |
+| Notes | 5000 |
+| Uncertainty | 2000 |
+
+The server validates every usable AI response before prefilling. Unknown metadata
+is returned as blank text; confidence must be high, medium, low, or unknown. Stock
+counts, locations, projects, vendors, prices, and datasheets are not inferred.
+Overlong AI labels are shortened to fit and their complete text is preserved in
+notes, with a visible warning. If notes still exceed the limit or the data is
+invalid, the response is rejected rather than silently losing information. Claude
+validation failures can trigger the OpenAI backup and are recorded in diagnostics.
+
+The form independently validates text lengths and quantities before uploading
+photos or saving. Oversized notes remain visible for editing. A server 422 response
+shows the field and constraint in a persistent message instead of only “Request
+failed (422)”. Failed saves retain the form and selected photo references for retry.
+The original rejected request was not recorded, so the exact field behind that
+past 422 is not known; oversized AI labels are a reproduced failure path.
+
+Structured output formats follow the official
+[Claude](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+and [OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs)
+documentation. These fixes await deployment approval.
