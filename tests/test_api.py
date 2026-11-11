@@ -172,7 +172,10 @@ class ApiTests(unittest.TestCase):
         with patch.dict(self.module.os.environ, {'OPENAI_API_KEY': 'fake-test-key'}):
             response = self.photo('/api/identify')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {**suggestion, 'provider': 'openai', 'fallback_reason': 'claude_not_configured'})
+        self.assertEqual({k: response.json()[k] for k in suggestion}, suggestion)
+        self.assertEqual(response.json()['provider'], 'openai')
+        self.assertEqual(response.json()['fallback_reason'], 'claude_not_configured')
+        self.assertTrue(response.json()['diagnostic_id'])
         self.assertEqual(self.client.get('/api/components').json(), [])
         self.assertEqual(list(self.module.UPLOADS.iterdir()), [])
         self.mock_ai.assert_called_once_with(api_key='fake-test-key', timeout=35, max_retries=0)
@@ -338,3 +341,87 @@ class ApiTests(unittest.TestCase):
         self.assertIn('backup is not configured', response.text)
         self.assertNotIn('private request details', response.text)
         self.assertNotIn('fake-claude', response.text)
+
+    def test_diagnostics_capture_claude_failure_and_openai_response_in_order(self):
+        self.mock_claude_response('Claude could not process this image', status=400)
+        self.mock_ai.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"name":"Backup board"}'))])
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude', 'OPENAI_API_KEY': 'fake-openai'}):
+            response = self.photo('/api/identify', content=b'private image fixture')
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result['fallback_detail'], 'Claude HTTP 400')
+        path = self.root / 'data/logs/ai-identification.jsonl'
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertTrue(all(record['request_id'] == result['diagnostic_id'] for record in records))
+        self.assertEqual([(r['provider'], r['event']) for r in records], [
+            ('claude','started'), ('claude','response'), ('claude','failed'),
+            ('openai','started'), ('openai','response'), ('openai','selected')])
+        self.assertEqual(records[1]['http_status'], 400)
+        self.assertIn('could not process', records[1]['response'])
+        self.assertEqual(records[2]['reason'], 'Claude HTTP 400')
+        self.assertEqual(records[4]['response'], '{"name":"Backup board"}')
+        self.assertNotIn('fake-claude', path.read_text())
+        self.assertNotIn('private image fixture', path.read_text())
+        self.assertNotIn(base64.b64encode(b'private image fixture').decode(), path.read_text())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        # Diagnostics are not served by the public upload or static mounts.
+        self.assertEqual(self.client.get('/data/logs/ai-identification.jsonl').status_code, 404)
+
+    def test_diagnostics_capture_invalid_json_and_success_without_backup(self):
+        self.mock_claude_response('not JSON')
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude'}):
+            self.assertEqual(self.photo('/api/identify').status_code, 502)
+        self.mock_claude_response('{"name":"Claude board"}')
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude'}):
+            result = self.photo('/api/identify').json()
+        records = [json.loads(line) for line in (self.root/'data/logs/ai-identification.jsonl').read_text().splitlines()]
+        self.assertTrue(any(r.get('reason') == 'Claude returned invalid JSON' for r in records))
+        selected = [r for r in records if r['request_id'] == result['diagnostic_id']]
+        self.assertEqual([r['event'] for r in selected], ['started', 'response', 'selected'])
+        self.assertTrue(all(r['provider'] == 'claude' for r in selected))
+        self.mock_ai.assert_not_called()
+
+    def test_diagnostics_redact_echoed_keys_and_images_and_bound_output(self):
+        secret = 'fake-private-key'
+        image = base64.b64encode(b'private fixture').decode()
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': secret}):
+            self.module.log_ai_event('request', 'claude', 'response', redactions=[image],
+                                     response=f'{secret} data:image/jpeg;base64,{image}')
+            self.module.log_ai_event('request', 'claude', 'response', response='word ' * 20000)
+        path = self.root / 'data/logs/ai-identification.jsonl'
+        text = path.read_text()
+        self.assertNotIn(secret, text)
+        self.assertNotIn(image, text)
+        self.assertIn('[REDACTED', text)
+        self.assertIn('[TRUNCATED]', text)
+        self.assertLessEqual(len(json.loads(text.splitlines()[1])['response']), 65536 + 12)
+
+    def test_diagnostics_rotate_and_io_failure_does_not_discard_identification(self):
+        for _ in range(34):
+            self.module.log_ai_event('request', 'claude', 'response', response='word ' * 13000)
+        directory = self.root / 'data/logs'
+        self.assertTrue((directory/'ai-identification.jsonl.1').exists())
+        self.assertLessEqual(len(list(directory.iterdir())), 4)
+        self.mock_claude_response('{"name":"Still identified"}')
+        with patch.object(self.module, 'PrivateAIHandler', side_effect=OSError('disk unavailable')):
+            with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude'}):
+                result = self.photo('/api/identify')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['provider'], 'claude')
+        self.mock_ai.assert_not_called()
+
+    def test_diagnostics_record_openai_http_error_without_exposing_keys(self):
+        upstream = httpx.Response(429, json={'error': {'message': 'Rate limit fake-openai'}},
+                                  request=httpx.Request('POST', 'https://api.openai.com/v1/chat/completions'))
+        self.mock_ai.return_value.chat.completions.create.side_effect = httpx.HTTPStatusError(
+            'upstream error', request=upstream.request, response=upstream)
+        with patch.dict(self.module.os.environ, {'OPENAI_API_KEY': 'fake-openai'}):
+            response = self.photo('/api/identify')
+        self.assertEqual(response.status_code, 502)
+        records = [json.loads(line) for line in (self.root/'data/logs/ai-identification.jsonl').read_text().splitlines()]
+        error = next(r for r in records if r['provider'] == 'openai' and r['event'] == 'response')
+        self.assertEqual(error['http_status'], 429)
+        self.assertIn('Rate limit', error['response'])
+        self.assertNotIn('fake-openai', error['response'])
+        self.assertNotIn('fake-openai', response.text)

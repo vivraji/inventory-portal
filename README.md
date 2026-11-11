@@ -148,7 +148,8 @@ may not preview in every browser. Physical iPhone verification remains pending.
 
 Claude request formatting follows the [official vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
 and [API authentication requirements](https://platform.claude.com/docs/en/api/overview).
-Provider keys and responses are not logged or included in client error messages.
+Provider keys are never logged or included in client error messages. The
+AI-diagnostics feature branch adds private local response logging as described below.
 
 AI identification automatically prefills the component name, category, manufacturer,
 model/part number, and notes when those values are returned. Useful visible markings
@@ -156,3 +157,44 @@ and identifying features go in notes. Empty or absent suggestions do not clear
 existing values. Stock counts, storage location, project, vendor, price, and datasheet
 remain user-controlled. Review the suggestions and press **Save component** to
 persist them; identifying alone does not create or update inventory records.
+
+## AI diagnostics (feature branch; not deployed yet)
+
+`feat/ai-diagnostics` records each identification attempt in
+`data/logs/ai-identification.jsonl` on the Mac. Entries share the log ID returned
+by the API and shown below the identification result. They include provider/model,
+photo count, response timing, Claude HTTP status and request ID, provider response
+text, selection, and the reason an attempt failed or OpenAI was started. HTTP
+errors, timeouts, invalid JSON, and unusable structured responses are distinguished.
+Past attempts made before this feature was deployed cannot be reconstructed.
+
+After an approved deployment, follow the log from the project directory:
+
+```sh
+tail -f data/logs/ai-identification.jsonl
+```
+
+Or show the most recent entries with indentation:
+
+```sh
+python3 - <<'PYLOG'
+import json
+from collections import deque
+from pathlib import Path
+path = Path('data/logs/ai-identification.jsonl')
+if not path.exists():
+    raise SystemExit('No diagnostic log yet. Run Identify with AI after deployment.')
+with path.open() as stream:
+    for line in deque(stream, maxlen=12):
+        print(json.dumps(json.loads(line), indent=2, ensure_ascii=False))
+PYLOG
+```
+
+These logs contain AI-generated descriptions and provider error responses, so treat
+them as private inventory data. They are not served over HTTP and are ignored by
+Git with the rest of `data/`. Files are created with owner-only read/write access.
+Each file rotates at approximately 2 MiB, retaining three older files (about 8 MiB
+in total); long response fields are truncated at 64 KiB. API keys, request headers,
+photo contents/base64 data, and original filenames are excluded or redacted.
+Logging failure must not cause a successful Claude result to fall back to OpenAI.
+This change does not make live API calls or deploy itself.

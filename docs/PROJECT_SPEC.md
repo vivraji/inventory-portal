@@ -190,3 +190,18 @@ full backup or commit backup artifacts to Git.
 Public hosting, cloud sync, and multi-user accounts are outside the current
 delivery scope. Exact future schemas, SSE protocol details, label formats, and
 allocation semantics remain implementation decisions to document with each feature.
+
+## Local AI diagnostics — implemented on feature branch, deployment pending
+
+The AI-diagnostics branch stores bounded JSON-line response diagnostics under
+`data/logs/ai-identification.jsonl`, with a shared request/log ID for Claude and
+OpenAI attempts. The browser shows the ID and a safe fallback reason; raw provider
+responses remain local to the Mac. Capture response text, status, timing, model,
+photo count, failure classification, and provider selection. Never log API keys,
+request headers, photo bytes/base64, or original upload filenames. Responses can
+contain component details and are private inventory data; logs are not served by
+an API or static mount. Owner-only files rotate at 2 MiB with three backups;
+individual response fields are capped at 64 KiB. Diagnostics failures must not
+change provider selection. Automated tests cover fallback order, successful
+Claude responses, redaction, file permissions, bounded output, rotation, and I/O
+failure. Historical responses from before deployment are unavailable.

@@ -3,9 +3,13 @@ import base64
 import csv
 import io
 import json
+import logging
 import os
+import re
 import sqlite3
+import time
 import uuid
+from logging.handlers import RotatingFileHandler
 
 import httpx
 from threading import Lock
@@ -28,6 +32,56 @@ DB = DATA / 'inventory.db'
 app = FastAPI(title='Inventory Portal', docs_url='/api/docs')
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 app.mount('/uploads', StaticFiles(directory=UPLOADS), name='uploads')
+
+AI_LOG_LOCK = Lock()
+
+class PrivateAIHandler(RotatingFileHandler):
+    def _open(self):
+        descriptor = os.open(self.baseFilename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        return os.fdopen(descriptor, self.mode, encoding=self.encoding)
+
+def log_ai_event(request_id, provider, event, redactions=(), **details):
+    """Local, bounded response diagnostics; never log request bodies or headers."""
+    record = {'time': datetime.now(timezone.utc).isoformat(), 'request_id': request_id,
+              'provider': provider, 'event': event, **details}
+    payload = json.dumps(record, ensure_ascii=False, default=str)
+    for name in ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']:
+        secret = os.environ.get(name, '').strip()
+        if secret:
+            payload = payload.replace(secret, '[REDACTED KEY]')
+    for value in redactions:
+        if value:
+            payload = payload.replace(value, '[REDACTED IMAGE]')
+    payload = re.sub(r'data:image/[^,\s"\\]+[,;][A-Za-z0-9+/=]+', '[REDACTED IMAGE]', payload)
+    payload = re.sub(r'[A-Za-z0-9+/]{120,}={0,2}', '[REDACTED LONG DATA]', payload)
+    clean = json.loads(payload)
+    for field, value in clean.items():
+        if isinstance(value, str) and len(value) > 65536:
+            clean[field] = value[:65536] + ' [TRUNCATED]'
+    payload = json.dumps(clean, ensure_ascii=False)
+    try:
+        with AI_LOG_LOCK:
+            directory = DATA / 'logs'
+            directory.mkdir(mode=0o700, exist_ok=True)
+            handler = PrivateAIHandler(directory / 'ai-identification.jsonl',
+                                       maxBytes=2 * 1024 * 1024, backupCount=3, encoding='utf8')
+            try:
+                handler.emit(logging.LogRecord('inventory.ai', logging.INFO, '', 0, payload, (), None))
+            finally:
+                handler.close()
+    except OSError:
+        logging.getLogger('uvicorn.error').warning('AI diagnostics could not be written; request %s', request_id)
+
+def ai_failure_reason(error):
+    if isinstance(error, httpx.HTTPStatusError):
+        return f'Claude HTTP {error.response.status_code}'
+    if isinstance(error, httpx.TimeoutException):
+        return 'Claude request timed out'
+    if isinstance(error, json.JSONDecodeError):
+        return 'Claude returned invalid JSON'
+    if isinstance(error, (ValueError, KeyError, TypeError)):
+        return 'Claude returned an unusable response'
+    return 'Claude request failed'
 
 # One Uvicorn process owns these transient invalidations. SQLite remains authoritative.
 class InventoryEvents:
@@ -225,6 +279,17 @@ async def identify(file: UploadFile | None = File(default=None),
             raise HTTPException(422, 'Identification photos must not be empty')
         images.append({'type': 'image_url', 'image_url': {
             'url': f'data:{photo.content_type};base64,{base64.b64encode(content).decode()}'}})
+    diagnostic_id = uuid.uuid4().hex
+    def audit(provider, event, **details):
+        log_ai_event(diagnostic_id, provider, event,
+                     redactions=[image['image_url']['url'].split(',', 1)[1] for image in images], **details)
+
+    def selected(result, provider, fallback_detail=''):
+        result['diagnostic_id'] = diagnostic_id
+        if fallback_detail:
+            result['fallback_detail'] = fallback_detail
+        audit(provider, 'selected', fallback_reason=result['fallback_reason'])
+        return result
     system = ('Identify electronic hobby components from photos. Return only a JSON object with '
               'keys name, category, manufacturer, model, notes, confidence (high/medium/low), uncertainty. '
               'Only state visible or confidently identifiable markings/specifications. Do not invent '
@@ -235,7 +300,11 @@ async def identify(file: UploadFile | None = File(default=None),
     prompt = ('These photos show the same component from different sides or magnifications. '
               'Combine visible evidence across all photos. Report conflicting markings or uncertainty.')
     fallback_reason = 'claude_not_configured'
+    fallback_detail = 'Claude is not configured'
     if claude_key:
+        started = time.monotonic()
+        audit('claude', 'started', model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
+              photo_count=len(images))
         try:
             blocks = []
             for image in images:
@@ -252,14 +321,25 @@ async def identify(file: UploadFile | None = File(default=None),
                         'model': os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
                         'max_tokens': 1024, 'system': system,
                         'messages': [{'role': 'user', 'content': [*blocks, {'type': 'text', 'text': prompt}]}]})
+                audit('claude', 'response', http_status=response.status_code,
+                      elapsed_ms=round((time.monotonic() - started) * 1000),
+                      provider_request_id=response.headers.get('request-id'), response=response.text)
                 response.raise_for_status()
                 text = ''.join(part.get('text', '') for part in response.json()['content'] if part.get('type') == 'text')
-            return identification_result(text, 'claude', '')
-        except Exception:
-            # Do not expose provider responses, keys, or request/photo contents.
+            return selected(identification_result(text, 'claude', ''), 'claude')
+        except Exception as exc:
+            fallback_detail = ai_failure_reason(exc)
+            audit('claude', 'failed', reason=fallback_detail, error_type=type(exc).__name__,
+                  elapsed_ms=round((time.monotonic() - started) * 1000))
             fallback_reason = 'claude_unavailable'
+    else:
+        audit('claude', 'skipped', reason=fallback_detail)
     if not key:
-        raise HTTPException(502, 'Claude identification failed; OpenAI backup is not configured')
+        audit('openai', 'skipped', reason='OpenAI backup is not configured')
+        raise HTTPException(502, f'Claude identification failed; OpenAI backup is not configured (request {diagnostic_id})')
+    started = time.monotonic()
+    audit('openai', 'started', model=os.environ.get('OPENAI_MODEL', 'gpt-4.1-mini'),
+          reason=fallback_detail, photo_count=len(images))
     try:
         from openai import OpenAI
         client = OpenAI(api_key=key, timeout=35, max_retries=0)
@@ -269,9 +349,18 @@ async def identify(file: UploadFile | None = File(default=None),
             messages=[{'role': 'system', 'content': system},
                       {'role': 'user', 'content': [{'type': 'text', 'text': prompt}, *images]}],
             max_tokens=450)
-        return identification_result(result.choices[0].message.content, 'openai', fallback_reason)
+        text = result.choices[0].message.content
+        audit('openai', 'response', response=text,
+              elapsed_ms=round((time.monotonic() - started) * 1000))
+        return selected(identification_result(text, 'openai', fallback_reason), 'openai', fallback_detail)
     except Exception as exc:
-        raise HTTPException(502, 'AI identification unavailable; please retry later') from exc
+        error_response = getattr(exc, 'response', None)
+        if isinstance(error_response, httpx.Response):
+            audit('openai', 'response', http_status=error_response.status_code,
+                  response=error_response.text)
+        audit('openai', 'failed', error_type=type(exc).__name__,
+              elapsed_ms=round((time.monotonic() - started) * 1000))
+        raise HTTPException(502, f'AI identification unavailable; please retry later (request {diagnostic_id})') from exc
 
 
 def identification_result(text, provider, fallback_reason):

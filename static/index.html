@@ -59,7 +59,7 @@ async function identifyPhoto(){
         const x=await api('/api/identify',{method:'POST',body:data});
         if(version!==formVersion)return;
         prefillComponentMetadata($('form'),x);
-        $('aiStatus').textContent=(x.provider==='claude'?'Claude':'OpenAI backup')+' · Confidence: '+(x.confidence||'unknown')+(x.uncertainty?' — '+x.uncertainty:'');
+        $('aiStatus').textContent=(x.provider==='claude'?'Claude':'OpenAI backup')+' · Confidence: '+(x.confidence||'unknown')+(x.uncertainty?' — '+x.uncertainty:'')+(x.fallback_detail?' · '+x.fallback_detail:'')+(x.diagnostic_id?' · Log ID: '+x.diagnostic_id:'');
         toast('Component metadata filled. Review the suggestions, then save.');
     }catch(e){if(version===formVersion){$('aiStatus').textContent=e.message;toast(e.message)}}finally{b.disabled=false}
 }
