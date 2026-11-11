@@ -263,7 +263,7 @@ backup and previous image were retained, protected-file checksums matched after
 the update, and live read-only asset/API/SSE/LAN checks passed. Existing thresholds
 and inventory records were preserved.
 
-## Inventory numbers and comparison — feature branch, deployment pending
+## Inventory numbers and comparison — implemented and deployed
 
 Assign a permanent `INV-000001` style inventory number server-side. Preserve UUIDs,
 record values, photographs and timestamps. Use an additive SQLite AUTOINCREMENT
@@ -291,14 +291,14 @@ on inventory refresh, and close comparison if an entry is deleted. Tests cover
 migration/number stability, search/export, duplicate confirmation, explicit distinct
 part values, concurrency, mobile comparison bounds and draft preservation.
 
-## Canonical categories, broad search and linked similarities — feature branch
+## Canonical categories, broad search and linked similarities — implemented and deployed
 
 Normalize category casing and spacing at API writes, AI result validation and
 startup, preserving common electronics acronyms. Use labels such as `Sensor Module`
 with spaces. Preserve distinct functional subcategories and all non-category data.
 Filters must reconcile an old selected case variant with its canonical label rather
 than adding a second option. The owner-requested stored-label cleanup was backed
-up and verified independently; deploying the prevention code is still pending.
+up and verified independently; the prevention code is now deployed.
 
 Search all textual/numeric metadata, not only a subset of name/model fields.
 Support partial terms and bounded typo matching with transpositions, shared between
@@ -311,3 +311,11 @@ hash links so copied/new-tab links resolve to the peer entry. Preserve expanded
 related-item lists through SSE refresh and remove stale relationships on deletion.
 Cache the symmetric relationship map while identities are unchanged; do not cap
 one side differently from the other. Existing save-time heuristic limitations apply.
+
+The owner-approved deployment on 2026-11-11 uses merged commit `649a035`. A full
+local backup is retained at `backups/pre-related-search-20261111T194729Z`, along
+with the previous Docker image tagged `pre-related-search`. All 68 automated tests
+and CI passed. Read-only runtime checks verified HTTP/assets, SSE, inventory-number
+uniqueness and search behavior; preservation checks verified existing inventory
+values, photographs, environment and Docker files, with SQLite integrity intact.
+Manual physical iPhone verification remains pending.

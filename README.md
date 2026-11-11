@@ -291,15 +291,15 @@ passed before deployment. Built-image checks and live read-only checks confirmed
 the responsive assets, form/API default of 1, inventory, SSE, and home-network
 access. Physical iPhone Safari verification remains a user device check.
 
-## Inventory numbers, similarity warnings and comparison (feature branch)
+## Inventory numbers, similarity warnings and comparison (deployed)
 
-`feat/similar-component-comparison` adds permanent, server-assigned inventory
+The portal provides permanent, server-assigned inventory
 numbers such as `INV-000123`. They appear on cards, edit forms, search results,
 comparison views and CSV exports. Existing UUIDs remain unchanged. An additive
 SQLite ledger assigns numbers to existing entries in creation order during startup,
 then assigns numbers to new entries in their save transaction. Numbers remain
 stable after edits/restarts and are never reused after deletion; the ledger is
-included in the normal full `data/` backup. This feature is not deployed yet.
+included in the normal full `data/` backup. This feature is deployed.
 
 When saving, possible matches show their inventory numbers, model, location, stock
 and a reason for the warning. Choose **Compare with draft**, **Keep editing**, or
@@ -329,9 +329,9 @@ with `?exclude_id=UUID`. Unconfirmed similar creates or identity-changing update
 return HTTP 409 with `detail.code=similar_components` and up to five candidate
 records. After explicit user confirmation, retry the write with
 `?allow_similar=true`. Existing inventory-number labels cannot be assigned by clients.
-Applying the additive ledger migration to live data requires approved deployment.
+The additive ledger migration was applied during the approved deployment.
 
-## Category consistency and search (feature branch; deployment pending)
+## Category consistency and search (deployed)
 
 Category labels use readable Title Case, for example `Sensor Module`, with one
 space between words and consistent spacing around `/` and `&`. Common electronics
@@ -346,8 +346,8 @@ At the owner's request, stored category labels were cleaned up in a dedicated
 transaction after a consistent SQLite backup at
 `backups/category-cleanup-20261111T193322Z/inventory.db`. Verification confirmed that
 all non-category values, IDs, timestamps and photograph files were unchanged.
-No container was restarted. Refresh the current portal to see that cleanup;
-prevention of new inconsistent entries requires deployment of this branch.
+No container was restarted for that cleanup. The subsequent approved deployment
+also prevents new inconsistent entries.
 
 Search checks all textual/numeric record metadata, including notes/description,
 category, manufacturer, model, vendor, storage, project, datasheet and inventory
@@ -359,7 +359,7 @@ characters allow one edit (two for longer words), including adjacent transpositi
 Search runs locally, not through a paid AI service, and does not search photo pixels
 or internal upload paths. The browser and API share matching regression fixtures.
 
-## Linked similar items (feature branch; deployment pending)
+## Linked similar items (deployed)
 
 A `🔗 N similar` indicator appears on every card that has related entries. Expand
 it for links labeled with the other items' inventory numbers and names, plus a
@@ -369,3 +369,13 @@ through background refreshes. Each link opens the other entry; links copied or
 opened in a new tab use `#component=UUID` to open that record after loading.
 The relationship map is cached while identities are unchanged and recalculated
 locally when necessary. No catalog data is sent to an AI service for these links.
+
+## Related inventory and search deployment record
+
+Merged commit `649a035` was deployed with owner approval on 2026-11-11. The full
+local data backup is `backups/pre-related-search-20261111T194729Z`; the previous
+image is retained as `inventory-portal-inventory:pre-related-search`. All 68 tests
+and CI passed before deployment. Read-only live checks passed for HTTP, assets,
+SSE, unique inventory numbers and metadata/typo searches. SQLite integrity passed;
+existing inventory values, photographs, environment and Docker files were preserved.
+Further deployments and restores still require explicit owner approval.
