@@ -231,3 +231,10 @@ commit `e9d2de8`. Automated checks cover 30 Python tests and 18 JavaScript tests
 CI and live read-only UI/API/SSE/LAN checks passed. A consistent local backup and
 previous image were retained. Post-deployment checksums matched all existing
 inventory data, photographs, environment settings and Docker configuration.
+
+## Low-stock default — feature branch, deployment pending
+
+New component forms and API-created records default to a low-stock threshold of 1.
+Existing records retain their thresholds, including an explicit 0 to disable alerts.
+Edits omitting the threshold preserve its stored value. This change does not rewrite
+existing SQLite defaults or inventory records; the API supplies the new-record value.
