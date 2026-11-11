@@ -191,9 +191,9 @@ Public hosting, cloud sync, and multi-user accounts are outside the current
 delivery scope. Exact future schemas, SSE protocol details, label formats, and
 allocation semantics remain implementation decisions to document with each feature.
 
-## Local AI diagnostics — implemented on feature branch, deployment pending
+## Local AI diagnostics — implemented and deployed
 
-The AI-diagnostics branch stores bounded JSON-line response diagnostics under
+The application stores bounded JSON-line response diagnostics under
 `data/logs/ai-identification.jsonl`, with a shared request/log ID for Claude and
 OpenAI attempts. The browser shows the ID and a safe fallback reason; raw provider
 responses remain local to the Mac. Capture response text, status, timing, model,
@@ -206,7 +206,7 @@ change provider selection. Automated tests cover fallback order, successful
 Claude responses, redaction, file permissions, bounded output, rotation, and I/O
 failure. Historical responses from before deployment are unavailable.
 
-## AI metadata contract and save validation — feature branch, deployment pending
+## AI metadata contract and save validation — implemented and deployed
 
 Both providers receive the same required structured JSON fields for descriptive
 metadata, confidence and uncertainty. The inventory model supplies field limits:
@@ -225,3 +225,9 @@ without displaying the submitted input from the error payload. Unsaved form data
 and successfully uploaded photo references remain available for correction and
 retry. Tests reproduce oversized AI labels and verify that the normalized metadata
 can be saved through the real API.
+
+The owner-approved validation/diagnostics deployment on 2026-11-11 uses merged
+commit `e9d2de8`. Automated checks cover 30 Python tests and 18 JavaScript tests;
+CI and live read-only UI/API/SSE/LAN checks passed. A consistent local backup and
+previous image were retained. Post-deployment checksums matched all existing
+inventory data, photographs, environment settings and Docker configuration.

@@ -149,7 +149,7 @@ may not preview in every browser. Physical iPhone verification remains pending.
 Claude request formatting follows the [official vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
 and [API authentication requirements](https://platform.claude.com/docs/en/api/overview).
 Provider keys are never logged or included in client error messages. The
-AI-diagnostics feature branch adds private local response logging as described below.
+application records private local response diagnostics as described below.
 
 AI identification automatically prefills the component name, category, manufacturer,
 model/part number, and notes when those values are returned. Useful visible markings
@@ -158,9 +158,9 @@ existing values. Stock counts, storage location, project, vendor, price, and dat
 remain user-controlled. Review the suggestions and press **Save component** to
 persist them; identifying alone does not create or update inventory records.
 
-## AI diagnostics (feature branch; not deployed yet)
+## AI diagnostics
 
-`feat/ai-diagnostics` records each identification attempt in
+The application records each identification attempt in
 `data/logs/ai-identification.jsonl` on the Mac. Entries share the log ID returned
 by the API and shown below the identification result. They include provider/model,
 photo count, response timing, Claude HTTP status and request ID, provider response
@@ -168,7 +168,7 @@ text, selection, and the reason an attempt failed or OpenAI was started. HTTP
 errors, timeouts, invalid JSON, and unusable structured responses are distinguished.
 Past attempts made before this feature was deployed cannot be reconstructed.
 
-After an approved deployment, follow the log from the project directory:
+After running **Identify with AI**, follow the log from the project directory:
 
 ```sh
 tail -f data/logs/ai-identification.jsonl
@@ -199,9 +199,9 @@ photo contents/base64 data, and original filenames are excluded or redacted.
 Logging failure must not cause a successful Claude result to fall back to OpenAI.
 This change does not make live API calls or deploy itself.
 
-## AI metadata validation and save errors (feature branch)
+## AI metadata validation and save errors
 
-The diagnostics branch also fixes hidden save-validation failures. Both providers
+The application displays field-specific save-validation failures. Both providers
 receive the same required JSON fields: name, category, manufacturer, model, notes,
 confidence, and uncertainty, with no additional fields requested. The schema is
 built from the inventory model. Provider schemas use the portable supported
@@ -234,4 +234,19 @@ past 422 is not known; oversized AI labels are a reproduced failure path.
 Structured output formats follow the official
 [Claude](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
 and [OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs)
-documentation. These fixes await deployment approval.
+documentation. These fixes were deployed with owner approval on 2026-11-11.
+
+## Validation and diagnostics deployment record
+
+On 2026-11-11, merged commit `e9d2de8` was deployed with owner approval. The
+pre-deployment database/photos backup is stored locally at
+`backups/pre-ai-validation-20261111T112942Z/`. SQLite integrity passed, and checksums
+confirmed that the database, existing photographs/data, `.env`, and Docker files
+were unchanged after the update. The previous image is retained as
+`inventory-portal-inventory:pre-ai-validation`.
+
+All 30 Python and 18 JavaScript tests passed, as did CI and the new image's isolated
+API suite. Read-only checks passed for the live UI, validation script, inventory
+API, SSE, private log routing and LAN access. No live AI identification was run
+for verification; logs are created on the next identification attempt. Further
+deployments and restores still require explicit owner approval.
