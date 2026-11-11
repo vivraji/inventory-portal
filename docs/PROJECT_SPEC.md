@@ -238,3 +238,21 @@ New component forms and API-created records default to a low-stock threshold of 
 Existing records retain their thresholds, including an explicit 0 to disable alerts.
 Edits omitting the threshold preserve its stored value. This change does not rewrite
 existing SQLite defaults or inventory records; the API supplies the new-record value.
+
+## Responsive viewport behavior — feature branch, deployment pending
+
+Keep dashboard and modal content within the visible viewport at phone, tablet and
+desktop widths. Grid/flex descendants must shrink; long AI metadata, diagnostic
+IDs, error messages, and action labels wrap. File controls and images remain bounded.
+Modals scroll vertically and follow the visual viewport height/offset for browser
+chrome, keyboard and zoom; safe-area padding and browser zoom are retained. Prevent
+background scrolling while forms are open. Text inputs use at least 16px font and
+buttons offer at least 44px height on touch screens.
+
+Development-only Playwright tests run Chromium and WebKit against static fixtures
+at nine dimensions, including 320px widths, landscape, tablet and desktop, and
+rotate open forms. They check root/modal/control overflow, long status and error
+text, photo selection, preserved unsaved values, toasts, and simulated keyboard/
+zoom viewport changes. CI runs these alongside API and JavaScript regression tests.
+The app remains vanilla JavaScript/CSS without a frontend build step. Physical
+Safari keyboard behavior still needs device verification after approved deployment.

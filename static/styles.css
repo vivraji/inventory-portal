@@ -1,0 +1,131 @@
+:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8edf5;background:#0b1120}
+*{box-sizing:border-box}
+body{margin:0}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.shell{display:grid;grid-template-columns:245px minmax(0,1fr);min-height:100vh}
+.sidebar{background:#101a2c;border-right:1px solid #27354a;padding:28px 19px}
+.brand{font-weight:800;font-size:20px;display:flex;gap:10px;align-items:center;margin-bottom:38px}
+.logo{background:linear-gradient(135deg,#5b8aff,#7b5aff);border-radius:12px;padding:10px}
+.nav{display:block;padding:13px 15px;color:#aabbd1;border-radius:11px;margin:8px 0;text-decoration:none}
+.nav.active,.nav:hover{background:#233454;color:#fff}
+.sidefoot{color:#7186a1;font-size:12px;margin-top:60px}
+.main{padding:36px;max-width:1500px;width:100%;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#82a6ff;font-weight:700}
+h1{font-size:32px;letter-spacing:-.04em;margin:8px 0}
+p{color:#96a9c3;margin:6px 0 24px}
+.btn{border:1px solid #33445e;background:#1a2a42;color:#f0f5ff;padding:11px 16px;border-radius:10px;font-weight:650}
+.btn.primary{background:#597cf8;border-color:#597cf8;color:white}
+.btn.danger{color:#ffb0b0}
+.btn:hover{filter:brightness(1.14)}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:17px;margin:28px 0}
+.stat,.panel{background:#121e31;border:1px solid #27374d;border-radius:16px}
+.stat{padding:23px}
+.stat .label{color:#91a4bd;font-size:13px}
+.stat strong{display:block;font-size:32px;margin-top:9px}
+.stat small{color:#7593c5}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:24px 0}
+.field{background:#101a2a;border:1px solid #34435a;border-radius:10px;padding:12px;color:#eef3fa;outline:none;min-width:0}
+.field:focus{border-color:#7897ff}
+.search{flex:1;min-width:0}
+.panel{padding:20px}
+.panelhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.panelhead h2{font-size:19px;margin:0}
+.count{color:#8299b5;font-size:13px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(225px,100%),1fr));gap:15px}
+.component{background:#17253a;border:1px solid #2c3d54;border-radius:13px;overflow:hidden;cursor:pointer;transition:transform .15s,border-color .15s}
+.component:hover{transform:translateY(-2px);border-color:#7897ff}
+.photo{height:155px;background:linear-gradient(135deg,#24334c,#182237);display:flex;align-items:center;justify-content:center;font-size:50px;color:#6b88ba}
+.photo img{flex:1;min-width:0;width:50%;height:100%;object-fit:cover}
+.details{padding:15px}
+.category{color:#88a8ff;text-transform:uppercase;font-size:10px;letter-spacing:.09em;font-weight:800}
+.name{font-size:16px;font-weight:700;margin:7px 0 5px;min-height:38px}
+.meta{font-size:12px;color:#9badc3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bottom{display:flex;justify-content:space-between;align-items:center;margin-top:17px}
+.pill{font-size:11px;padding:6px 9px;border-radius:30px;background:#223d37;color:#91e0b5}
+.pill.low{background:#51332f;color:#ffb4a6}
+.empty{text-align:center;padding:58px 20px;color:#8da4c0}
+.empty .emoji{font-size:45px;margin-bottom:14px}
+.overlay{position:fixed;inset:0;background:#040914d9;display:none;align-items:center;justify-content:center;padding:18px;z-index:5}
+.overlay.open{display:flex}
+.modal{width:min(740px,100%);max-height:100%;overflow:auto;background:#142137;border:1px solid #3b4d67;border-radius:18px;padding:25px}
+.modalhead{display:flex;align-items:center;justify-content:space-between}
+.modal h2{margin:0 0 8px}
+.formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin:20px 0}
+.formgrid label{display:block;font-size:12px;color:#9ab0c9;font-weight:650}
+.formgrid .field{width:100%;margin-top:7px}
+.wide{grid-column:1/-1}
+textarea.field{resize:vertical;min-height:70px}
+.upload{border:1px dashed #4b6488;border-radius:12px;padding:16px;background:#172840}
+.upload input{max-width:100%}
+.preview{width:120px;height:100px;object-fit:cover;border-radius:9px;display:none;margin-top:12px}
+.notice{background:#243650;color:#cbd9ef;padding:12px;border-radius:10px;font-size:13px;margin:12px 0}
+.modalactions{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:15px}
+.toast{position:fixed;right:20px;bottom:20px;background:#273e5b;border:1px solid #5c7aa3;padding:14px 18px;border-radius:12px;display:none;z-index:10;max-width:380px}
+.toast.show{display:block}
+@media(max-width:800px){.shell{grid-template-columns:1fr}
+.sidebar{padding:14px 18px;display:flex;align-items:center;gap:16px;border-right:0;border-bottom:1px solid #27354a}
+.brand{margin:0;font-size:16px}
+.nav{display:none}
+.sidefoot{display:none}
+.main{padding:22px 16px}
+.stats{gap:9px}
+.stat{padding:15px}
+.stat strong{font-size:25px}
+.formgrid{grid-template-columns:1fr}
+.modal{padding:18px}
+.top h1{font-size:28px}
+}
+
+
+/* Let nested grid/flex children shrink instead of expanding the page. */
+html{width:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-wrap:anywhere}
+body{min-width:0;padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+body.modal-open{overflow:hidden}
+.main,.sidebar,.top>*,.panelhead>*,.modalhead>*,.formgrid>*,.actions>*,.stat,.panel,.component,.details,.upload{min-width:0}
+button,input,select,textarea{max-width:100%}
+.btn{min-height:44px;white-space:normal;overflow-wrap:anywhere}
+input[type=file]{display:block;width:100%;min-width:0;max-width:100%;font-size:16px;margin:10px 0}
+input[type=file]::file-selector-button{font:inherit;max-width:100%;min-height:44px}
+.formgrid .field{font-size:16px}
+.toolbar>.field{flex:1 1 150px;min-width:0;max-width:100%}
+.toolbar>.search{flex:2 1 220px}
+.panelhead,.bottom{flex-wrap:wrap;gap:10px}
+.modalhead{gap:12px}
+.modalhead h2{min-width:0;flex:1}
+.modalhead>.btn{flex:0 0 44px;padding:8px}
+#aiStatus{flex:1 1 180px;min-width:0;overflow-wrap:anywhere}
+#aiPhotoList .actions{align-items:center;margin:12px 0}
+.preview{max-width:100%}
+.overlay{
+    inset:auto;top:var(--view-top,0px);left:var(--view-left,0px);
+    width:var(--view-width,100%);height:100vh;height:var(--view-height,100dvh);
+    padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+}
+.modal{min-width:0;max-width:100%;max-height:100%;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.toast{
+    right:auto;bottom:auto;
+    left:calc(var(--view-left,0px) + var(--view-width,100vw) - max(12px,env(safe-area-inset-right)));
+    top:calc(var(--view-top,0px) + var(--view-height,100vh) - max(12px,env(safe-area-inset-bottom)));
+    transform:translate(-100%,-100%);width:max-content;
+    max-width:min(380px,calc(var(--view-width,100vw) - 24px));
+    max-height:min(240px,calc(var(--view-height,100vh) - 24px));overflow:auto;overflow-wrap:anywhere;
+}
+@media(max-width:800px){
+    .shell{grid-template-columns:minmax(0,1fr)}
+    .toolbar>.search{flex-basis:100%}
+    .main{padding-bottom:max(22px,env(safe-area-inset-bottom))}
+    .formgrid{grid-template-columns:minmax(0,1fr)}
+    .modalactions>.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;margin-left:0!important}
+    .modalactions>.danger{width:100%}
+}
+@media(max-width:360px){
+    .main{padding-left:12px;padding-right:12px}
+    .panel{padding:14px}
+    .stat{padding:10px}
+    .stat .label,.stat small{font-size:12px}
+    .top>.actions{width:100%}
+    .top>.actions>.btn{flex:1 1 0}
+}
