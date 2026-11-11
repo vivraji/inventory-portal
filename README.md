@@ -380,7 +380,7 @@ SSE, unique inventory numbers and metadata/typo searches. SQLite integrity passe
 existing inventory values, photographs, environment and Docker files were preserved.
 Further deployments and restores still require explicit owner approval.
 
-## Sensor similarity correction — implemented on feature branch; not deployed
+## Sensor similarity correction — implemented and deployed
 
 A metadata-only Claude/OpenAI review found no likely duplicates among the currently
 flagged sensor pairs. Both providers recommended keeping separate entries; some
@@ -392,4 +392,12 @@ as sensor module identifiers. Exact matching module model fields remain stronger
 evidence, and same-function/name matches remain available. This is a local heuristic,
 not a verified identification or electrical compatibility judgment. No records,
 quantities, categories or photographs are rewritten; both portal links and save
-warnings use the corrected matcher. Deployment still requires owner approval.
+warnings use the corrected matcher. Further deployments still require owner approval.
+
+The corrected matcher (`351dc5e`) was deployed with owner approval on 2026-11-11.
+All 43 Python and 19 JavaScript tests passed before deployment. Live read-only
+checks confirmed that all ten reviewed pairs were excluded from reciprocal links
+and save prechecks, and HTTP/SSE/LAN access passed. Database contents, photographs,
+private reports, environment and Docker files matched the consistent local backup
+at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
+retained as `inventory-portal-inventory:pre-sensor-matcher`.
