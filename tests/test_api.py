@@ -5,11 +5,15 @@ import importlib.util
 import io
 import json
 import shutil
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import httpx
 
 from fastapi.testclient import TestClient
 
@@ -30,12 +34,17 @@ class ApiTests(unittest.TestCase):
         self.client = TestClient(self.module.app)
         self.addCleanup(self.client.close)
         # Never use a developer's real key, even if the environment provides one.
-        self.env = patch.dict(self.module.os.environ, {'OPENAI_API_KEY': '', 'OPENAI_MODEL': 'test-model'})
+        self.env = patch.dict(self.module.os.environ, {'OPENAI_API_KEY': '', 'OPENAI_MODEL': 'test-model', 'ANTHROPIC_API_KEY': '', 'ANTHROPIC_MODEL': 'test-claude', 'ANTHROPIC_WORKSPACE_ID': ''})
         self.env.start()
         self.addCleanup(self.env.stop)
         self.ai = patch('openai.OpenAI')
         self.mock_ai = self.ai.start()
         self.addCleanup(self.ai.stop)
+        self.claude = patch('httpx.AsyncClient')
+        self.mock_claude = self.claude.start()
+        self.addCleanup(self.claude.stop)
+        self.claude_post = AsyncMock(side_effect=AssertionError('Unconfigured Claude call'))
+        self.mock_claude.return_value.__aenter__.return_value.post = self.claude_post
 
     def create(self, **fields):
         response = self.client.post('/api/components', json={'name': 'Test board', **fields})
@@ -163,10 +172,10 @@ class ApiTests(unittest.TestCase):
         with patch.dict(self.module.os.environ, {'OPENAI_API_KEY': 'fake-test-key'}):
             response = self.photo('/api/identify')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), suggestion)
+        self.assertEqual(response.json(), {**suggestion, 'provider': 'openai', 'fallback_reason': 'claude_not_configured'})
         self.assertEqual(self.client.get('/api/components').json(), [])
         self.assertEqual(list(self.module.UPLOADS.iterdir()), [])
-        self.mock_ai.assert_called_once_with(api_key='fake-test-key', timeout=35)
+        self.mock_ai.assert_called_once_with(api_key='fake-test-key', timeout=35, max_retries=0)
         request = self.mock_ai.return_value.chat.completions.create.call_args.kwargs
         self.assertEqual(request['model'], 'test-model')
         image = request['messages'][1]['content'][1]['image_url']['url']
@@ -188,10 +197,144 @@ class ApiTests(unittest.TestCase):
 
     def test_reimport_preserves_database_and_photograph(self):
         image = self.photo().json()['image']
-        created = self.create(image=image)
+        back = self.photo(content=b'back').json()['image']
+        created = self.create(image=image, image_back=back)
         spec = importlib.util.spec_from_file_location('restarted_api', self.root / 'app.py')
         restarted = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(restarted)
         with TestClient(restarted.app) as client:
             self.assertEqual(client.get('/api/components').json(), [created])
             self.assertEqual(client.get(image).content, b'fixture')
+            self.assertEqual(client.get(back).content, b'back')
+
+    def test_two_catalog_slots_survive_edits_export_and_restart(self):
+        front = self.photo(content=b'front').json()['image']
+        back = self.photo(content=b'back').json()['image']
+        created = self.create(image=front, image_back=back)
+        self.assertEqual(created['image_back'], back)
+        path = '/api/components/' + created['id']
+        # An older client must not erase a back photo it cannot display.
+        updated = self.client.put(path, json={'name': 'Old client edit', 'image': front}).json()
+        self.assertEqual(updated['image_back'], back)
+        rows = list(csv.DictReader(io.StringIO(self.client.get('/api/export.csv').text)))
+        self.assertEqual(rows[0]['image_back'], back)
+        cleared = self.client.put(path, json={'name': 'Clear back', 'image': front, 'image_back': ''}).json()
+        self.assertEqual(cleared['image_back'], '')
+        self.assertEqual(self.client.get(back).content, b'back')
+        self.assertEqual(self.client.get(front).content, b'front')
+
+    def test_multiple_ai_photos_sent_together_without_persistence(self):
+        self.mock_ai.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"name":"Board"}'))])
+        photos = [('files', ('front.jpg', b'front', 'image/jpeg')),
+                  ('files', ('back.png', b'back', 'image/png')),
+                  ('files', ('markings.webp', b'markings', 'image/webp'))]
+        with patch.dict(self.module.os.environ, {'OPENAI_API_KEY': 'fake-test-key'}):
+            response = self.client.post('/api/identify', files=photos)
+        self.assertEqual(response.status_code, 200)
+        request = self.mock_ai.return_value.chat.completions.create.call_args.kwargs
+        parts = request['messages'][1]['content']
+        self.assertEqual(len(parts), 4)
+        for part, (_, (_, content, kind)) in zip(parts[1:], photos):
+            self.assertEqual(part['image_url']['url'],
+                             f'data:{kind};base64,{base64.b64encode(content).decode()}')
+        self.assertEqual(list(self.module.UPLOADS.iterdir()), [])
+        self.assertEqual(self.client.get('/api/components').json(), [])
+
+    def test_ai_validates_all_photos_count_and_total_before_calling_openai(self):
+        cases = [([('files', ('x.jpg', b'x', 'image/jpeg'))] * 7, 422),
+                 ([('files', ('x.jpg', b'x', 'image/jpeg')),
+                   ('files', ('bad.heic', b'x', 'image/heic'))], 415),
+                 ([('files', ('empty.jpg', b'', 'image/jpeg'))], 422),
+                 ([('files', ('large.jpg', b'x' * (LIMIT + 1), 'image/jpeg'))], 413),
+                 ([('files', ('large.jpg', b'x' * LIMIT, 'image/jpeg'))] * 3, 413)]
+        with patch.dict(self.module.os.environ, {'OPENAI_API_KEY': 'fake-test-key'}):
+            for photos, status in cases:
+                with self.subTest(status=status, count=len(photos)):
+                    self.assertEqual(self.client.post('/api/identify', files=photos).status_code, status)
+        self.mock_ai.assert_not_called()
+        self.assertEqual(list(self.module.UPLOADS.iterdir()), [])
+
+    def test_legacy_database_migration_is_additive_and_repeatable(self):
+        legacy_root = self.root / 'legacy'
+        legacy_root.mkdir()
+        shutil.copy(self.root / 'app.py', legacy_root)
+        shutil.copytree(self.root / 'static', legacy_root / 'static')
+        (legacy_root / 'data/uploads').mkdir(parents=True)
+        photo = legacy_root / 'data/uploads/existing.jpg'
+        photo.write_bytes(b'original photo')
+        original = self.create(image='/uploads/existing.jpg', quantity=7)
+        original.pop('image_back')
+        with closing(sqlite3.connect(self.module.DB)) as con:
+            columns = [r for r in con.execute('PRAGMA table_info(components)') if r[1] != 'image_back']
+        with closing(sqlite3.connect(legacy_root / 'data/inventory.db')) as con:
+            declarations = [f'{r[1]} {r[2]}' + (' PRIMARY KEY' if r[5] else '') +
+                            (' NOT NULL' if r[3] else '') + (f' DEFAULT {r[4]}' if r[4] is not None else '')
+                            for r in columns]
+            con.execute('CREATE TABLE components (' + ','.join(declarations) + ')')
+            con.execute('INSERT INTO components (' + ','.join(original) + ') VALUES (' +
+                        ','.join('?' for _ in original) + ')', list(original.values()))
+            con.commit()
+        for _ in range(2):
+            spec = importlib.util.spec_from_file_location('legacy_api', legacy_root / 'app.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            with TestClient(module.app) as client:
+                self.assertEqual(client.get('/api/components').json(), [{**original, 'image_back': ''}])
+            self.assertEqual(photo.read_bytes(), b'original photo')
+
+    def mock_claude_response(self, text, status=200):
+        self.claude_post.side_effect = None
+        self.claude_post.return_value = httpx.Response(status,
+            json={'content': [{'type': 'text', 'text': text}]},
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'))
+
+    def test_claude_is_primary_and_receives_all_photos(self):
+        self.mock_claude_response('{"name":"Board","confidence":"low"}')
+        photos = [('files', ('front.jpg', b'front', 'image/jpeg')),
+                  ('files', ('back.png', b'back', 'image/png'))]
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude',
+                        'OPENAI_API_KEY': 'fake-openai', 'ANTHROPIC_WORKSPACE_ID': 'test-workspace'}):
+            response = self.client.post('/api/identify', files=photos)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['provider'], 'claude')
+        # Low confidence is shown for review, without a second paid request.
+        self.mock_ai.assert_not_called()
+        request = self.claude_post.call_args.kwargs
+        self.assertEqual(request['json']['model'], 'test-claude')
+        self.assertEqual(request['headers']['Authorization'], 'Bearer fake-claude')
+        self.assertEqual(request['headers']['anthropic-workspace-id'], 'test-workspace')
+        blocks = request['json']['messages'][0]['content']
+        self.assertEqual(len(blocks), 3)
+        self.assertEqual(blocks[0]['source']['data'], base64.b64encode(b'front').decode())
+        self.assertEqual(blocks[1]['source']['media_type'], 'image/png')
+        self.assertEqual(list(self.module.UPLOADS.iterdir()), [])
+
+    def test_openai_backup_on_claude_failure_or_unusable_response(self):
+        self.mock_ai.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"name":"Backup board"}'))])
+        for text, status in [('upstream error', 429), ('not JSON', 200), ('[]', 200),
+                             ('{"name":3}', 200), ('{"name":"Board","notes":[]}', 200)]:
+            with self.subTest(text=text, status=status):
+                self.mock_claude_response(text, status)
+                with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude',
+                                                       'OPENAI_API_KEY': 'fake-openai'}):
+                    response = self.photo('/api/identify')
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()['provider'], 'openai')
+                self.assertEqual(response.json()['fallback_reason'], 'claude_unavailable')
+        self.assertEqual(self.mock_ai.call_count, 5)
+
+    def test_claude_timeout_uses_backup_and_missing_backup_is_clear(self):
+        self.claude_post.side_effect = httpx.ReadTimeout('private request details')
+        self.mock_ai.return_value.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"name":"Backup"}'))])
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude', 'OPENAI_API_KEY': 'fake-openai'}):
+            response = self.photo('/api/identify')
+        self.assertEqual(response.json()['provider'], 'openai')
+        with patch.dict(self.module.os.environ, {'ANTHROPIC_API_KEY': 'fake-claude'}):
+            response = self.photo('/api/identify')
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('backup is not configured', response.text)
+        self.assertNotIn('private request details', response.text)
+        self.assertNotIn('fake-claude', response.text)

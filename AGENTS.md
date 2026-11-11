@@ -31,7 +31,7 @@ Inventory lives in `data/inventory.db`; photographs live in `data/uploads/`.
 - Tests must use temporary databases and upload directories, never the owner's
   `data/`. Importing `app.py` currently creates directories and initializes the
   configured database, so isolate storage before importing it in future tests.
-- Mock OpenAI in automated tests; do not send private photos or incur API charges
+- Mock Claude and OpenAI in automated tests; do not send private photos or incur API charges
   as part of routine verification.
 
 ## Development workflow
@@ -48,7 +48,8 @@ Inventory lives in `data/inventory.db`; photographs live in `data/uploads/`.
   document that limitation and do not expose it to the public internet. Changes to
   deployment or network configuration require approval before being applied.
 - AI suggestions require human review. Keep ordinary photo storage local and make
-  sending a photo to OpenAI an explicit user action.
+  sending photos to Claude/OpenAI an explicit user action with provider routing
+  disclosed before submission.
 
 ## Development priorities
 

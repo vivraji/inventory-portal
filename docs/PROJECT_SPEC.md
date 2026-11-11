@@ -4,7 +4,7 @@
 
 Provide a professional electronics and microcontroller inventory system hosted on
 the owner's Mac mini and accessible from Mac and iPhone on a trusted home network.
-Users should be able to photograph and identify components with OpenAI, maintain
+Users should be able to photograph and identify components with Claude, with OpenAI as backup, maintain
 stock and storage locations, print QR labels for components and bins, scan those
 labels with an iPhone, and track components allocated to projects.
 
@@ -19,7 +19,7 @@ Planned requirements below are not claims of current functionality.
 | Frontend | `static/index.html`, with inline CSS and vanilla JavaScript; no frontend build step |
 | Persistence | `data/inventory.db` and `data/uploads/`, mounted into the container as `/app/data` |
 | Hosting | Python 3.12 Docker image running Uvicorn; one Docker Compose service on port 8000 |
-| AI | Optional server-side OpenAI call configured through environment variables |
+| AI | On the feature branch, Claude primary with OpenAI backup; keys and models configured through environment variables |
 | API documentation | `/api/docs` |
 
 The backend, models, schema initialization, and database access currently share
@@ -33,11 +33,11 @@ regains focus or visibility. It filters the component list locally.
 | Capability | Current behavior |
 | --- | --- |
 | Inventory | Create, edit, delete, and list component records with UUID identifiers and timestamps |
-| Component details | Name, category, manufacturer, model, quantity, minimum quantity, location, project, vendor, price, datasheet URL, notes, and one image reference |
+| Component details | Name, category, manufacturer, model, quantity, minimum quantity, location, project, vendor, price, datasheet URL, notes, and front/back image references (maximum two catalog photos) |
 | Search and filters | Name/model/manufacturer/notes/project search; category and location filters, also supported by the list API |
 | Dashboard | Component types, total units, and low-stock counts; low stock means quantity at or below a positive threshold |
-| Photos | Upload JPEG, PNG, WebP, or HEIC, up to 10 MiB per photo; photos retained after record deletion |
-| AI identification | JPEG, PNG, or WebP submitted explicitly to OpenAI; suggested fields, confidence, and uncertainty shown for review before saving |
+| Photos | Up to two catalog slots, front/back, on the multi-photo feature branch; JPEG, PNG, WebP, or HEIC, up to 10 MiB each; files retained after removal |
+| AI identification | On the multi-photo feature branch, 1–6 JPEG/PNG/WebP views are submitted together explicitly to Claude first, with OpenAI backup; at most 20 MiB total; suggestions reviewed before saving |
 | Export | CSV download of component records |
 | Synchronization | SSE invalidation after committed component changes; reconnect refresh, focus/visibility fallback, serialized reads, and retry on refresh failures |
 | Storage and projects | Free-text location and project fields; location menu displays existing location names |
@@ -67,8 +67,9 @@ The inspected Compose configuration publishes `8000:8000` on all host interfaces
 supporting LAN access subject to host networking and firewall rules. The README documents this LAN binding.
 Preserve the intended trusted home-network access; Phase 1 does not change Compose.
 
-Ordinary photo uploads stay local. AI identification sends the selected photograph
-to OpenAI and requires a separately configured API key. Suggestions are advisory;
+Ordinary photo uploads stay local. AI identification on the feature branch sends selected photographs to Claude first
+and to OpenAI on failure. Each provider needs its own API key. The UI discloses
+this routing before submission and labels the provider used. Suggestions are advisory;
 users must verify markings and electrical specifications. HEIC storage exists,
 but conversion for AI identification is not implemented.
 
@@ -119,7 +120,24 @@ Tests must never read or mutate live inventory or use a real API key.
 
 ### 3. iPhone camera and AI identification
 
-Provide a clear iPhone camera capture flow alongside photo-library selection.
+Multi-photo identification and front/back catalog slots are implemented on
+`feat/multi-photo-identification`, not deployed. Users select up to six views of the
+same component (10 MiB per image, 20 MiB total), while saving at most two catalog
+photos. AI-only references are temporary unless assigned to front or back.
+The legacy `image` field is retained as front; an additive, repeatable `image_back`
+migration preserves existing records and photos. Older edits omitting `image_back`
+preserve it. Old single-file identification requests remain supported, and CSV
+exports include both slots. Claude uses asynchronous HTTP and OpenAI calls run off the event loop so SSE
+remains responsive. Claude is primary; OpenAI is tried only when Claude fails or
+returns unusable output, or when only an OpenAI key is configured. Low confidence
+alone does not cause a second call. API keys and upstream failure details are not
+exposed. Both providers are mocked in tests. Compose additions to pass Anthropic
+settings are documented but not applied; those changes and deployment require approval.
+Automated tests cover migration, request validation, multi-image payloads, photo
+selection, and upload retries. Applying the migration to live data requires an
+approved deployment. These changes do not add HEIC conversion or a camera stream.
+
+Still planned: provide a clear iPhone camera capture flow alongside photo-library selection.
 Preview images, explain supported formats, handle HEIC conversion or give an
 actionable fallback, and show upload/AI progress and recoverable errors. Keep AI
 submission explicit, present uncertainty, and let users review or edit suggestions

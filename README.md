@@ -1,6 +1,6 @@
 # Inventory Portal
 
-A local-first electronics component inventory for Mac and iPhone. Catalog boards, sensors, displays, tools, and parts; attach photos; track stock and storage; and optionally use OpenAI to suggest identification from photos.
+A local-first electronics component inventory for Mac and iPhone. Catalog boards, sensors, displays, tools, and parts; attach photos; track stock and storage; and optionally use Claude, with OpenAI backup, to suggest identification from photos.
 
 ## Quick start (Mac)
 
@@ -13,7 +13,42 @@ Your inventory and uploaded images persist in `./data/`, even when the container
 
 ## Optional AI identification
 
-Copy `.env.example` to `.env`, set `OPENAI_API_KEY=your_key`, then run `docker compose up -d --force-recreate`. An OpenAI API key is billed separately from ChatGPT subscriptions. Photos submitted using **Identify with AI** are sent to the configured model; ordinary photo uploads stay local. The app currently accepts JPEG, PNG and WebP for AI identification; iPhone HEIC photos can be stored but must be converted before AI identification.
+Create a workspace-scoped API key in [Claude Console](https://platform.claude.com/settings/keys)
+and enable API billing. Add `ANTHROPIC_API_KEY` to your local `.env`; keep the
+existing `OPENAI_API_KEY` as backup. Do not paste keys into chat or commit them.
+Claude and OpenAI API usage are billed separately from consumer chat subscriptions.
+The sample environment file documents configurable model names. The default primary
+is `claude-sonnet-5-5`; the existing OpenAI model setting is unchanged.
+
+**These provider changes are on the feature branch and are not deployed.** Compose
+currently passes only OpenAI settings. After owner approval, its environment list
+will need the following additions before an approved rebuild/restart:
+
+```yaml
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5-5}
+      - ANTHROPIC_WORKSPACE_ID=${ANTHROPIC_WORKSPACE_ID:-}
+```
+
+Use `ANTHROPIC_WORKSPACE_ID` only if your key is not workspace-scoped. The actual
+Compose file and `.env` are unchanged by this feature branch. Merely adding a key
+to `.env` does not make it available to the existing container.
+
+Identification tries Claude first. If its request fails, times out, or returns
+unusable output, the same photos are sent to OpenAI when its key is configured.
+Without a Claude key, an existing OpenAI-only setup continues to work. Results
+show which provider answered. Low confidence alone does not trigger another paid
+request; users review the suggestion. Both providers failing returns a safe error.
+Ordinary uploads stay local. Photos are sent to providers only when you explicitly
+press **Identify with AI**.
+
+Use the front and back slots for the two photos you want in the catalog. Add
+close-ups or other angles under **Additional photos for AI identification**. The
+AI receives all selected views together (1–6 photos, at most 10 MB each and 20 MB
+total). Extra AI photos stay temporary and are not uploaded to catalog storage
+unless you choose **Use as front** or **Use as back**. More images may increase
+identification cost. JPEG, PNG and WebP are supported for identification; HEIC
+can be stored but must be converted before AI identification.
 
 AI identification is advisory and may be inaccurate. Always verify part markings and electrical specifications against manufacturer documentation before wiring components.
 
@@ -29,8 +64,8 @@ For secure access away from home, use Tailscale on both devices and enable Tails
 - Search by name, model, manufacturer, project, or notes
 - Filter by category and storage location
 - Add, edit, delete component records
-- Attach photos (max 10 MB each)
-- Optional AI image identification with uncertainty disclosure
+- Keep up to two catalog photos per component (front/back; max 10 MB each)
+- Optional AI identification from multiple photos, with uncertainty disclosure
 - CSV export
 - Persistent SQLite database and local photo storage
 - Built-in API docs at `/api/docs`
@@ -72,13 +107,13 @@ Use Python 3.12+ and Node.js 18+ in a development environment:
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
-node --test tests/sync.test.cjs
+node --test tests/*.test.cjs
 ```
 
 Python tests copy application source and static assets into a temporary directory
 and start a separate loopback server on an ephemeral port. Only temporary SQLite
 and upload storage is used; the project database, photos, environment files, and
-running deployment are untouched. Tests mock OpenAI and cover CRUD, validation, search and filters, stock statistics,
+running deployment are untouched. Tests mock Claude and OpenAI and cover CRUD, validation, search and filters, stock statistics,
 photo types and size limits, CSV content, AI success/error paths, persistence, and
 SSE. JavaScript tests cover connection lifecycle, fallback refresh, request
 coalescing, recovery, and preserving filters and unsaved forms. GitHub Actions runs
@@ -100,3 +135,26 @@ running service. Device verification still requires Mac and iPhone: open both
 browsers, change a record, confirm the other refreshes, and repeat after switching
 Wi-Fi off/on and backgrounding Safari. Check that unsaved forms remain intact.
 Any further deployment or restore still requires explicit owner approval.
+
+## Multi-photo feature branch
+
+Multi-photo identification and front/back catalog slots are implemented on
+`feat/multi-photo-identification`; they are not deployed yet. A future approved
+deployment adds an `image_back` column without replacing the database. Existing
+`image` references become the front slot; records, IDs, quantities, timestamps, and
+photographs are preserved. Older API clients can continue sending a single `file`
+for identification, and edits that omit `image_back` retain the existing back photo.
+CSV export includes both image references. Clearing a slot or deleting a component
+retains the underlying photo file.
+
+The new identification API also accepts repeated multipart `files` fields for up
+to six views of the same component. It validates the entire set before calling
+OpenAI, and does not store identification-only images. The existing model setting
+is unchanged. Multi-image requests follow the
+[official OpenAI vision documentation](https://developers.openai.com/api/docs/guides/images-vision?api-mode=chat).
+HEIC remains supported for storage, but must be converted for identification and
+may not preview in every browser. Physical iPhone verification remains pending.
+
+Claude request formatting follows the [official vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
+and [API authentication requirements](https://platform.claude.com/docs/en/api/overview).
+Provider keys and responses are not logged or included in client error messages.

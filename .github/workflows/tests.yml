@@ -31,6 +31,6 @@ jobs:
       - name: Python API and SSE regression tests
         run: python -m unittest discover -s tests -v
       - name: Browser synchronization tests
-        run: node --test tests/sync.test.cjs
+        run: node --test tests/*.test.cjs
       - name: Check whitespace
         run: git diff --check
