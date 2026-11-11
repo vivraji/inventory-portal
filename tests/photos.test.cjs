@@ -14,7 +14,7 @@ function setup(existing = {}) {
         }
     });
     vm.runInContext(fs.readFileSync('static/photos.js', 'utf8'), context);
-    return {editor: context.createPhotoEditor(), revoked, fetched};
+    return {editor: context.createPhotoEditor(), prefill: context.prefillComponentMetadata, revoked, fetched};
 }
 const photo = (name, size = 10, type = 'image/jpeg') => ({name, size, type});
 
@@ -98,4 +98,37 @@ test('reset releases preview URLs and removes temporary AI references', () => {
     assert.equal(revoked.length, 2);
     assert.equal(editor.references().length, 0);
     assert.equal(editor.slots()[0].path, '/uploads/old.jpg');
+});
+
+test('AI prefills descriptive metadata and preserves stock and organization', () => {
+    const {prefill} = setup();
+    const fields = Object.fromEntries(['name', 'category', 'manufacturer', 'model', 'notes',
+        'quantity', 'min_quantity', 'location', 'project', 'vendor', 'price', 'datasheet']
+        .map(key => [key, {value: 'existing ' + key}]));
+    const result = prefill({elements: {namedItem: key => fields[key]}}, {
+        name: '  ESP32 board ', category: 'Microcontrollers', manufacturer: 'Espressif',
+        model: 'ESP32-WROOM', notes: 'Visible USB connector and antenna.', quantity: 99,
+        location: 'invented location', project: 'invented project', price: 999,
+        datasheet: 'https://invented.example'
+    });
+    assert.equal(result.length, 5);
+    assert.equal(fields.name.value, 'ESP32 board');
+    assert.equal(fields.category.value, 'Microcontrollers');
+    assert.equal(fields.manufacturer.value, 'Espressif');
+    assert.equal(fields.model.value, 'ESP32-WROOM');
+    assert.equal(fields.notes.value, 'Visible USB connector and antenna.');
+    for (const key of ['quantity','min_quantity','location','project','vendor','price','datasheet'])
+        assert.equal(fields[key].value, 'existing ' + key);
+});
+
+test('missing, empty, or invalid AI metadata does not clear existing fields', () => {
+    const {prefill} = setup();
+    const fields = {name: {value: 'Old name'}, manufacturer: {value: 'Known maker'}, notes: {value: 'My notes'}};
+    const result = prefill({elements: {namedItem: key => fields[key]}}, {
+        name: 'New name', manufacturer: '', notes: {unexpected: 'object'}
+    });
+    assert.equal(result.length, 1);
+    assert.equal(fields.name.value, 'New name');
+    assert.equal(fields.manufacturer.value, 'Known maker');
+    assert.equal(fields.notes.value, 'My notes');
 });

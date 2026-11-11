@@ -20,19 +20,11 @@ Claude and OpenAI API usage are billed separately from consumer chat subscriptio
 The sample environment file documents configurable model names. The default primary
 is `claude-sonnet-5-5`; the existing OpenAI model setting is unchanged.
 
-**These provider changes are on the feature branch and are not deployed.** Compose
-currently passes only OpenAI settings. After owner approval, its environment list
-will need the following additions before an approved rebuild/restart:
-
-```yaml
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-5-5}
-      - ANTHROPIC_WORKSPACE_ID=${ANTHROPIC_WORKSPACE_ID:-}
-```
-
-Use `ANTHROPIC_WORKSPACE_ID` only if your key is not workspace-scoped. The actual
-Compose file and `.env` are unchanged by this feature branch. Merely adding a key
-to `.env` does not make it available to the existing container.
+Compose passes `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, and optionally
+`ANTHROPIC_WORKSPACE_ID` into the server container alongside the existing OpenAI
+backup settings. Use `ANTHROPIC_WORKSPACE_ID` only if your key is not
+workspace-scoped. The local `.env` stays private and is never committed. Changes
+to keys or model settings take effect on an approved container recreation.
 
 Identification tries Claude first. If its request fails, times out, or returns
 unusable output, the same photos are sent to OpenAI when its key is configured.
@@ -136,11 +128,10 @@ browsers, change a record, confirm the other refreshes, and repeat after switchi
 Wi-Fi off/on and backgrounding Safari. Check that unsaved forms remain intact.
 Any further deployment or restore still requires explicit owner approval.
 
-## Multi-photo feature branch
+## Multi-photo identification and metadata
 
-Multi-photo identification and front/back catalog slots are implemented on
-`feat/multi-photo-identification`; they are not deployed yet. A future approved
-deployment adds an `image_back` column without replacing the database. Existing
+Multi-photo identification and front/back catalog slots are implemented.
+Startup adds an `image_back` column without replacing the database. Existing
 `image` references become the front slot; records, IDs, quantities, timestamps, and
 photographs are preserved. Older API clients can continue sending a single `file`
 for identification, and edits that omit `image_back` retain the existing back photo.
@@ -158,3 +149,10 @@ may not preview in every browser. Physical iPhone verification remains pending.
 Claude request formatting follows the [official vision guide](https://platform.claude.com/docs/en/build-with-claude/vision)
 and [API authentication requirements](https://platform.claude.com/docs/en/api/overview).
 Provider keys and responses are not logged or included in client error messages.
+
+AI identification automatically prefills the component name, category, manufacturer,
+model/part number, and notes when those values are returned. Useful visible markings
+and identifying features go in notes. Empty or absent suggestions do not clear
+existing values. Stock counts, storage location, project, vendor, price, and datasheet
+remain user-controlled. Review the suggestions and press **Save component** to
+persist them; identifying alone does not create or update inventory records.

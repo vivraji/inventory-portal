@@ -229,7 +229,9 @@ async def identify(file: UploadFile | None = File(default=None),
               'keys name, category, manufacturer, model, notes, confidence (high/medium/low), uncertainty. '
               'Only state visible or confidently identifiable markings/specifications. Do not invent '
               'datasheet links, voltage, pinout, or manufacturer. If unclear, give a generic name and '
-              'say what additional photo is needed.')
+              'say what additional photo is needed. Use notes for useful visible markings, '
+              'interfaces and identifying features. Never infer stock counts, storage location, '
+              'project allocation, vendor or purchase price from the photos.')
     prompt = ('These photos show the same component from different sides or magnifications. '
               'Combine visible evidence across all photos. Report conflicting markings or uncertainty.')
     fallback_reason = 'claude_not_configured'

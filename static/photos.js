@@ -1,3 +1,16 @@
+// Only descriptive metadata is suggested. Stock and organization stay user-controlled.
+function prefillComponentMetadata(form, suggestion) {
+    const filled = [];
+    for (const key of ['name', 'category', 'manufacturer', 'model', 'notes']) {
+        const field = form.elements.namedItem(key);
+        if (field && typeof suggestion[key] === 'string' && suggestion[key].trim()) {
+            field.value = suggestion[key].trim();
+            filled.push(key);
+        }
+    }
+    return filled;
+}
+
 /* Catalog slots are independent of the temporary AI reference set. */
 function createPhotoEditor(changed = () => {}) {
     let slots = [{path: '', file: null}, {path: '', file: null}], references = [];
