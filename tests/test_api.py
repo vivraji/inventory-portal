@@ -806,3 +806,20 @@ class ApiTests(unittest.TestCase):
                 con.execute('INSERT INTO similarity_reviews VALUES (?,?,?)',
                             ('fixture-'+str(i),self.module.now(),json.dumps(review)))
         self.assertEqual(len(self.client.get('/api/similarity-reviews').json()),20)
+
+    def test_public_build_metadata_and_release_page_match_packaged_manifest(self):
+        manifest=json.loads((ROOT/'static/release-notes.json').read_text())
+        before=self.client.get('/api/components').json()
+        response=self.client.get('/api/build')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.headers['cache-control'],'no-store')
+        self.assertEqual(response.json(),{'build_number':manifest[0]['build_number'],
+            'label':'Build '+str(manifest[0]['build_number']),'release_notes_url':'/release-notes'})
+        self.assertEqual(self.client.get('/api/releases').json(),manifest)
+        page=self.client.get('/release-notes')
+        self.assertEqual(page.status_code,200)
+        self.assertIn('text/html',page.headers['content-type'])
+        self.assertIn('/static/release-notes.js',page.text)
+        self.assertIn('buildInfo',self.client.get('/').text)
+        self.assertNotIn(str(self.root),response.text)
+        self.assertEqual(self.client.get('/api/components').json(),before)

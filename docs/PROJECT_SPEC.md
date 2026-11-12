@@ -1,400 +1,226 @@
 # Inventory Portal project specification
 
-## Objective
+## Objective and delivery status
 
-Provide a professional electronics and microcontroller inventory system hosted on
-the owner's Mac mini and accessible from Mac and iPhone on a trusted home network.
-Users should be able to photograph and identify components with Claude, with OpenAI as backup, maintain
-stock and storage locations, print QR labels for components and bins, scan those
-labels with an iPhone, and track components allocated to projects.
+Maintain a professional electronics/microcontroller inventory on the owner's Mac
+mini, usable from Mac and iPhone over the trusted home network. Preserve all
+existing inventory, photographs and local configuration throughout development.
 
-This specification separates the inspected baseline from planned development.
-Planned requirements below are not claims of current functionality.
+The latest verified deployed application is `721e296` (PR #9). It includes the
+inventory, synchronization, photos, search, comparison and AI similarity-review
+features below. **Build 1 is implemented in the current branch but not deployed:**
+it adds build identification, portal release notes and consolidated documentation.
+[Release notes](RELEASE_NOTES.md) describe source changes;
+[deployment history](DEPLOYMENTS.md) records verified runtime updates.
 
-## Current architecture
+## Architecture
 
-| Area | Implemented baseline |
+| Area | Current implementation |
 | --- | --- |
-| Backend | FastAPI in `app.py`; Pydantic input validation; direct SQLite queries |
-| Frontend | `static/index.html`, with inline CSS and vanilla JavaScript; no frontend build step |
-| Persistence | `data/inventory.db` and `data/uploads/`, mounted into the container as `/app/data` |
-| Hosting | Python 3.12 Docker image running Uvicorn; one Docker Compose service on port 8000 |
-| AI | Claude primary with OpenAI backup; keys and models configured through environment variables |
-| API documentation | `/api/docs` |
-
-The backend, models, schema initialization, and database access currently share
-one Python file. Schema initialization uses `CREATE TABLE IF NOT EXISTS`; there
-is no migration framework. The frontend fetches all components and statistics at
-page load, after its own saves/deletes, on SSE invalidations, and when the browser
-regains focus or visibility. It filters the component list locally.
-
-## Implemented features and limits
-
-| Capability | Current behavior |
-| --- | --- |
-| Inventory | Create, edit, delete, and list component records with UUID identifiers and timestamps |
-| Component details | Name, category, manufacturer, model, quantity, minimum quantity, location, project, vendor, price, datasheet URL, notes, and front/back image references (maximum two catalog photos) |
-| Search and filters | Name/model/manufacturer/notes/project search; category and location filters, also supported by the list API |
-| Dashboard | Component types, total units, and low-stock counts; low stock means quantity at or below a positive threshold |
-| Photos | Up to two catalog slots, front/back; JPEG, PNG, WebP, or HEIC, up to 10 MiB each; files retained after removal |
-| AI identification | 1–6 JPEG/PNG/WebP views are submitted together explicitly to Claude first, with OpenAI backup; at most 20 MiB total; suggestions reviewed before saving |
-| Export | CSV download of component records |
-| Synchronization | SSE invalidation after committed component changes; reconnect refresh, focus/visibility fallback, serialized reads, and retry on refresh failures |
-| Storage and projects | Free-text location and project fields; location menu displays existing location names |
-| Mobile UI | Responsive layout and image file picker; dedicated camera capture workflow is not implemented |
-
-Existing API routes are `GET /api/components`, `POST /api/components`,
-`PUT /api/components/{ident}`, `DELETE /api/components/{ident}`,
-`GET /api/stats`, `GET /api/events`, `POST /api/upload`, `POST /api/identify`, and
-`GET /api/export.csv`. The UI is served at `/`, with static assets and uploaded
-photos under `/static` and `/uploads`.
-
-SSE synchronization is merged and deployed. Automated API/SSE regression tests
-and browser synchronization tests are implemented; Phase 2 adds broader API
-coverage and CI. There is no QR generation/scanning,
-storage-bin entity, project BOM, quantity allocation model,
-or application backup/restore workflow. CSV export is not a complete backup.
-The README describes a manual stopped-container backup of `data/`.
-
-## Network access and privacy
-
-The application has **no authentication or user accounts**. Devices that can reach
-the service can access inventory, photographs, and mutation endpoints. Operate it
-only on the trusted home network or a secured private connection; do not publish
-it to the public internet.
-
-The inspected Compose configuration publishes `8000:8000` on all host interfaces,
-supporting LAN access subject to host networking and firewall rules. The README documents this LAN binding.
-Preserve the intended trusted home-network access; Phase 1 does not change Compose.
-
-Ordinary photo uploads stay local. AI identification sends selected photographs to Claude first
-and to OpenAI on failure. Each provider needs its own API key. The UI discloses
-this routing before submission and labels the provider used. Suggestions are advisory;
-users must verify markings and electrical specifications. HEIC storage exists,
-but conversion for AI identification is not implemented.
-
-## Development phases, in priority order
-
-### 1. Reliable synchronization — implemented; device verification pending
-
-The implementation uses server-sent events (SSE) so committed inventory changes on either device
-refresh the other device's inventory, statistics, and filters without a manual
-reload. SQLite remains the source of truth; events should trigger authoritative
-reads rather than become a second inventory store.
-
-Verification covers real HTTP streams and simulated browser lifecycle events.
-The approved Phase 1 deployment passed local read-only HTTP/SSE smoke checks on
-2026-11-11. Manual Mac/iPhone Safari verification remains pending. Events
-are transient invalidations with a 3-second reconnect hint and 15-second comment
-heartbeats. Each connection receives an initial invalidation to recover missed
-changes; no replay log is needed. Notifications use bounded per-client queues and
-are process-local: run one Uvicorn worker, as in the current Docker configuration.
-Multiple workers or replicas would require shared event delivery. Direct SQLite
-edits outside the API do not publish events. SSE refresh does not resolve
-concurrent edit conflicts; existing full-record update semantics remain.
-
-Acceptance criteria:
-
-- Create, update, and delete changes appear on another connected browser promptly.
-- Publish notifications only after successful commits; failed writes emit none.
-- Handle disconnects, reconnects, server restarts, and iPhone background/resume;
-  reconnecting clients refresh current state even if events were missed.
-- Refresh on browser focus and return to visible state as a fallback, with bounded
-  duplicate requests and clear handling of connection failures.
-- Preserve filters and unsaved form input during background refreshes.
-- Clean up disconnected clients and verify two-browser behavior, including iPhone
-  Safari. Document any single-process event delivery assumption.
-
-### 2. Automated API regression tests — implemented on the Phase 2 branch
-
-Repeatable tests use temporary storage and a mocked AI client. Coverage includes
-CRUD, missing records, validation, combined search/filters, stock threshold
-boundaries, photo formats/size limits and retention, CSV content, AI success/error
-paths, persistence after reinitialization, SSE commit notifications and reconnects,
-and browser lifecycle behavior. README.md documents local commands.
-
-The GitHub Actions workflow runs Python 3.12 API/SSE tests and Node 24 browser
-synchronization tests for pull requests and pushes to main. It uses pinned official
-actions, read-only repository permissions, and no secrets or deployment credentials.
-Tests must never read or mutate live inventory or use a real API key.
-
-### 3. iPhone camera and AI identification — partially implemented
-
-Multi-photo identification and front/back catalog slots are implemented. Users select up to six views of the
-same component (10 MiB per image, 20 MiB total), while saving at most two catalog
-photos. AI-only references are temporary unless assigned to front or back.
-The legacy `image` field is retained as front; an additive, repeatable `image_back`
-migration preserves existing records and photos. Older edits omitting `image_back`
-preserve it. Old single-file identification requests remain supported, and CSV
-exports include both slots. Claude uses asynchronous HTTP and OpenAI calls run off the event loop so SSE
-remains responsive. Claude is primary; OpenAI is tried only when Claude fails or
-returns unusable output, or when only an OpenAI key is configured. Low confidence
-alone does not cause a second call. API keys and upstream failure details are not
-exposed. Both providers are mocked in tests. Compose passes Anthropic settings into the container. The owner authorized this
-configuration change and deployment; further deployments still require approval.
-Automated tests cover migration, request validation, multi-image payloads, photo
-selection, and upload retries. The migration is applied only during an approved deployment. These changes do not add HEIC conversion or a camera stream.
-
-AI results prefill name, category, manufacturer, model, and notes for review.
-Missing or empty suggestions preserve existing values; quantities, locations,
-projects, vendor, price, and datasheet are not inferred. Saving remains explicit.
-
-Still planned: provide a clear iPhone camera capture flow alongside photo-library selection.
-Preview images, explain supported formats, handle HEIC conversion or give an
-actionable fallback, and show upload/AI progress and recoverable errors. Keep AI
-submission explicit, present uncertainty, and let users review or edit suggestions
-before saving. Verify the workflow on iPhone Safari and Mac. Determine any camera
-secure-context requirements and private HTTPS setup before choosing a browser
-camera implementation; deployment still requires owner approval.
-
-### 4. QR labels, scanning, and inventory updates
-
-Generate printable QR labels with stable identifiers for components and storage
-bins. Scanning on iPhone should open the relevant record or bin; an in-app scanner
-should offer permission/error handling and a manual lookup fallback. Resolve
-private host addressing and camera access as part of the implementation design.
-Do not put secrets or mutation commands in QR payloads. Scanning alone must not
-change stock; users explicitly confirm quantity adjustments. Validate quantities,
-avoid duplicate adjustments from retries, and synchronize successful changes.
-
-### 5. Storage bins and project BOMs
-
-Introduce storage bins with stable identifiers, names, and component membership,
-preserving existing free-text locations during migration. Introduce projects and
-BOM lines with required and allocated quantities. Show available stock and
-shortages, prevent over-allocation, and define reserve, consume, release, and
-return semantics before implementation. Preserve existing project text when
-adding structured relationships. Use transactions and protect concurrent edits
-from silently losing stock or allocation changes.
-
-### 6. Backup and restore
-
-Provide a documented, consistent backup of SQLite and all photographs, with schema
-version information and integrity validation. Exercise restoration into isolated
-storage and verify records and image references. Before replacing live data,
-require explicit owner approval and preserve a recovery copy. Document downtime,
-failure recovery, and a backup schedule. Do not treat CSV as a substitute for a
-full backup or commit backup artifacts to Git.
-
-## Engineering and delivery requirements
-
-- Preserve existing inventory and photographs through all changes and migrations.
-- Never commit secrets, SQLite files, uploads, or private backups.
-- Keep FastAPI, SQLite, vanilla JavaScript, Docker Compose, and local persistent
-  storage as the default architecture; justify substantial new dependencies.
-- Use feature branches, automated tests, and small reviewable commits.
-- Never reset the database or deploy changes without explicit owner approval.
-- Keep trusted home-network access available and document the lack of authentication.
-- Update this specification as planned capabilities ship, with verification evidence.
-
-Public hosting, cloud sync, and multi-user accounts are outside the current
-delivery scope. Exact future schemas, SSE protocol details, label formats, and
-allocation semantics remain implementation decisions to document with each feature.
-
-## Local AI diagnostics — implemented and deployed
-
-The application stores bounded JSON-line response diagnostics under
-`data/logs/ai-identification.jsonl`, with a shared request/log ID for Claude and
-OpenAI attempts. The browser shows the ID and a safe fallback reason; raw provider
-responses remain local to the Mac. Capture response text, status, timing, model,
-photo count, failure classification, and provider selection. Never log API keys,
-request headers, photo bytes/base64, or original upload filenames. Responses can
-contain component details and are private inventory data; logs are not served by
-an API or static mount. Owner-only files rotate at 2 MiB with three backups;
-individual response fields are capped at 64 KiB. Diagnostics failures must not
-change provider selection. Automated tests cover fallback order, successful
-Claude responses, redaction, file permissions, bounded output, rotation, and I/O
-failure. Historical responses from before deployment are unavailable.
-
-## AI metadata contract and save validation — implemented and deployed
-
-Both providers receive the same required structured JSON fields for descriptive
-metadata, confidence and uncertainty. The inventory model supplies field limits:
-name 180, category 80, manufacturer/model 120 each, notes 5000; uncertainty is
-limited to 2000. Portable provider schemas specify structure and describe limits;
-the server enforces types, confidence values and lengths using the inventory model.
-Unknown descriptive fields become empty strings, and inventory quantities and
-organization are excluded. Long AI labels are shortened while preserving their
-complete text in notes; if the combined notes exceed the limit, reject the response
-and follow the existing fallback/error path. A valid schema does not prove the
-component identification is correct; user review remains required.
-
-Client checks prevent invalid text lengths or quantities from reaching uploads or
-save requests. A persistent message names fields rejected by server validation,
-without displaying the submitted input from the error payload. Unsaved form data
-and successfully uploaded photo references remain available for correction and
-retry. Tests reproduce oversized AI labels and verify that the normalized metadata
-can be saved through the real API.
-
-The owner-approved validation/diagnostics deployment on 2026-11-11 uses merged
-commit `e9d2de8`. Automated checks cover 30 Python tests and 18 JavaScript tests;
-CI and live read-only UI/API/SSE/LAN checks passed. A consistent local backup and
-previous image were retained. Post-deployment checksums matched all existing
-inventory data, photographs, environment settings and Docker configuration.
-
-## Low-stock default — implemented and deployed
-
-New component forms and API-created records default to a low-stock threshold of 1.
-Existing records retain their thresholds, including an explicit 0 to disable alerts.
-Edits omitting the threshold preserve its stored value. This change does not rewrite
-existing SQLite defaults or inventory records; the API supplies the new-record value.
-
-## Responsive viewport behavior — implemented and deployed
-
-Keep dashboard and modal content within the visible viewport at phone, tablet and
-desktop widths. Grid/flex descendants must shrink; long AI metadata, diagnostic
-IDs, error messages, and action labels wrap. File controls and images remain bounded.
-Modals scroll vertically and follow the visual viewport height/offset for browser
-chrome, keyboard and zoom; safe-area padding and browser zoom are retained. Prevent
-background scrolling while forms are open. Text inputs use at least 16px font and
-buttons offer at least 44px height on touch screens.
-
-Development-only Playwright tests run Chromium and WebKit against static fixtures
-at nine dimensions, including 320px widths, landscape, tablet and desktop, and
-rotate open forms. They check root/modal/control overflow, long status and error
-text, photo selection, preserved unsaved values, toasts, and simulated keyboard/
-zoom viewport changes. CI runs these alongside API and JavaScript regression tests.
-The app remains vanilla JavaScript/CSS without a frontend build step. Physical
-Safari keyboard behavior still needs device verification.
-
-The responsive UI and new-record threshold default were deployed with owner approval
-on 2026-11-11 using merged commit `8252d2f`. All 53 tests and CI passed. A consistent
-backup and previous image were retained, protected-file checksums matched after
-the update, and live read-only asset/API/SSE/LAN checks passed. Existing thresholds
-and inventory records were preserved.
-
-## Inventory numbers and comparison — implemented and deployed
-
-Assign a permanent `INV-000001` style inventory number server-side. Preserve UUIDs,
-record values, photographs and timestamps. Use an additive SQLite AUTOINCREMENT
-ledger keyed by component UUID, backfill missing ledger entries in creation order,
-and never remove ledger entries when components are deleted. The startup migration
-must be repeatable without consuming numbers or renumbering records. New numbers
-are allocated in the save transaction; rejected saves do not reserve numbers.
-Show numbers in cards, the edit form, search, comparison and CSV export.
-
-Warn before saving if another record has the same normalized model/part number or
-a locally similar name using electronics vocabulary, fuzzy word similarity and
-common resistor-value notation. This is advisory heuristic matching, not general
-semantic embedding or AI judgment. Show up to five numbered candidates with the
-match reason, model, stock and location. Never merge or alter existing quantities
-automatically. Allow comparison with the draft, correction, or explicit confirmation
-to save separately. Check before photo upload and again within an immediate SQLite
-transaction on unconfirmed writes. Recheck changed drafts; exclude the edited record
-and permit ordinary stock/location updates without repeated identity warnings.
-
-Provide responsive side-by-side comparison for two selected saved components and
-for a draft against a warning candidate. Show identifying metadata, stock, storage,
-projects, vendor, price, datasheet, notes and front/back images; highlight differing
-values. Preserve the open form and draft photos. Update saved comparison values
-on inventory refresh, and close comparison if an entry is deleted. Tests cover
-migration/number stability, search/export, duplicate confirmation, explicit distinct
-part values, concurrency, mobile comparison bounds and draft preservation.
-
-## Canonical categories, broad search and linked similarities — implemented and deployed
-
-Normalize category casing and spacing at API writes, AI result validation and
-startup, preserving common electronics acronyms. Use labels such as `Sensor Module`
-with spaces. Preserve distinct functional subcategories and all non-category data.
-Filters must reconcile an old selected case variant with its canonical label rather
-than adding a second option. The owner-requested stored-label cleanup was backed
-up and verified independently; the prevention code is now deployed.
-
-Search all textual/numeric metadata, not only a subset of name/model fields.
-Support partial terms and bounded typo matching with transpositions, shared between
-browser/API regression fixtures. Preserve active category/storage filters; do not
-search uploaded image bytes or make paid AI calls for search.
-
-Show a linked similarity indicator on both ends of each detected relationship,
-listing peer names and inventory numbers with open/compare actions. Use stable UUID
-hash links so copied/new-tab links resolve to the peer entry. Preserve expanded
-related-item lists through SSE refresh and remove stale relationships on deletion.
-Cache the symmetric relationship map while identities are unchanged; do not cap
-one side differently from the other. Existing save-time heuristic limitations apply.
-
-The owner-approved deployment on 2026-11-11 uses merged commit `649a035`. A full
-local backup is retained at `backups/pre-related-search-20261111T194729Z`, along
-with the previous Docker image tagged `pre-related-search`. All 68 automated tests
-and CI passed. Read-only runtime checks verified HTTP/assets, SSE, inventory-number
-uniqueness and search behavior; preservation checks verified existing inventory
-values, photographs, environment and Docker files, with SQLite integrity intact.
-Manual physical iPhone verification remains pending.
-
-## Sensor similarity correction — implemented and deployed
-
-A metadata-only Claude/OpenAI review found no likely duplicates among the currently
-flagged sensor pairs. Both providers recommended keeping separate entries; some
-OpenAI verdicts described shared circuitry as related but distinct. Similarity
-matching now rejects explicitly different sensor functions (for example tilt,
-ambient light, magnetic, obstacle detection and optical interruption), even when
-they share comparator circuitry. Common support ICs such as LM393 are not treated
-as sensor module identifiers. Exact matching module model fields remain stronger
-evidence, and same-function/name matches remain available. This is a local heuristic,
-not a verified identification or electrical compatibility judgment. No records,
-quantities, categories or photographs are rewritten; both portal links and save
-warnings use the corrected matcher. Further deployments still require owner approval.
-
-The corrected matcher (`351dc5e`) was deployed with owner approval on 2026-11-11.
-All 43 Python and 19 JavaScript tests passed before deployment. Live read-only
-checks confirmed that all ten reviewed pairs were excluded from reciprocal links
-and save prechecks, and HTTP/SSE/LAN access passed. Database contents, photographs,
-private reports, environment and Docker files matched the consistent local backup
-at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
-retained as `inventory-portal-inventory:pre-sensor-matcher`.
-
-## Selected-component similarity review — implemented and deployed
-
-Provide a sidebar/menu action and a phone-visible AI review button. Users select
-2–8 components and explicitly submit every selected pair to Claude, OpenAI or both.
-Both providers run independently with the same metadata, with no automatic fallback
-or retry. Send only inventory numbers and descriptive identity fields, never photo
-bytes, UUIDs, quantities, storage or purchase information. The UI discloses provider
-routing, paid API calls and metadata-only scope before submission. Photographic
-re-identification and automatic category/metadata editing are outside this workflow.
-
-Validate structured pair coverage, verdicts, confidence and explanation lengths;
-show failures safely without leaking keys. Save immutable component snapshots and
-AI findings locally in additive SQLite review history. List the latest 20 reviews,
-allow reopening saved reviews, and provide an escaped HTML download. Historical
-reports describe AI findings rather than asserting that decisions were applied.
-
-A separate explicit apply operation accepts checked pair decisions after human
-review: possible duplicate, related but distinct, different components, or return
-to automatic matching. Reviewed positive decisions create reciprocal links and
-save warnings; negative decisions suppress them. Apply must be transactional,
-require at least one successful provider review, reject stale/deleted pairs, and
-publish SSE only after commit. No merge, deletion, stock change, component field
-rewrite or photo change occurs. Decisions are tied to both UUIDs and fingerprints
-of name/category/manufacturer/model/notes; changed metadata restores heuristic
-matching. Stock/storage edits retain decisions. New entries are not covered by
-another pair's override. Deletion cascades active decisions, retaining review
-history for audit. Full database backups include both new tables.
-
-Verification uses temporary databases and mocked providers, including independent
-requests, incomplete output, failed providers, data preservation, stale atomic
-rejection, symmetric links, save prechecks, reset to automatic, selection limits,
-HTML escaping, and Chromium/WebKit phone layouts. No live AI calls or deployment
-are performed during implementation. Existing LAN access and Docker settings remain.
-
-## Card alignment — implemented and deployed
-
-Stretch cards and their details to equal height within each responsive grid row.
-Anchor quantity/stock status and Compare controls at the bottom; render related
-links above those controls. Preserve full readable names/categories and responsive
-widths. Browser checks cover variable content and expanded relationship lists in
-Chromium and WebKit from phone to desktop widths.
-
-## Selected AI review and card alignment deployment record
-
-Merged commit `721e296` (PR #9) was deployed with owner approval on 2026-11-11
-(Pacific time). A consistent full local backup is retained at
-`backups/pre-selected-ai-review-20261112T000443Z`, with the previous Docker image
-tagged `inventory-portal-inventory:pre-selected-ai-review`. All 81 automated tests
-and PR CI passed before deployment; the built image also initialized successfully
-using offline temporary storage. Live checks passed for the review menu, history
-endpoint, static assets, inventory/relationships, SSE and `http://mahdi.local:8000`.
-Data checks confirmed preserved inventory IDs/numbers, stock, photographs, private
-reports, environment and Docker files, with SQLite integrity and foreign keys intact.
-An ordinary name edit saved through the API after startup was retained. No live AI
-calls or test inventory writes were made during deployment checks. Further
-deployments and restores require explicit owner approval.
+| Server | FastAPI in `app.py`; Pydantic validation; direct SQLite transactions; one Uvicorn worker |
+| Client | Vanilla JavaScript in `static/index.html`, `sync.js`, `photos.js`, `compare.js`, `search.js`, `reviews.js` and `viewport.js`; styles in `static/styles.css` |
+| Data | `data/inventory.db`, local `data/uploads/`, private logs and optional manual reports |
+| Hosting | Python 3.12 Docker image; one Compose service; persistent `./data:/app/data`; port `8000:8000` |
+| AI | Claude primary/OpenAI backup for photo identification; independent selected providers for metadata pair reviews |
+| Build 1 additions | Packaged `static/release-notes.json`, `build.js`, release-notes HTML/JS, `/api/build`, `/api/releases`, `/release-notes` |
+| Verification | Isolated Python API/SSE tests, Node tests, Chromium/WebKit fixtures and GitHub Actions |
+
+The application/database logic shares `app.py`; importing it initializes configured
+local storage. Tests copy the source/static files into temporary directories before
+import. There is no frontend framework or bundler, external database, migration
+framework, authentication service or background job infrastructure.
+
+Startup creates tables if missing and applies additive, repeatable changes:
+`image_back`, an inventory-number ledger, review history and active pair decisions.
+It canonicalizes category spelling without changing other component fields or
+modification timestamps. Never replace/recreate the live database to migrate.
+
+## Implemented inventory contracts
+
+- UUID identity plus a permanent `INV-000001`-style number. The AUTOINCREMENT ledger
+  backfills existing entries in creation order, allocates numbers in save
+  transactions and retains ledger entries after deletion so numbers are not reused.
+- CRUD fields: name, category, manufacturer, model, quantity, minimum quantity,
+  location, project, vendor, unit price, datasheet URL, notes and front/back references.
+  Creation/modification timestamps and UUIDs are preserved through migrations.
+- New-record quantity and minimum quantity default to 1. Positive minimums alert
+  at or below the threshold; explicit zero disables alerts. Existing minimums and
+  omitted threshold/back-photo values on older edit requests are preserved.
+- Category labels use Title Case with spaces, normalized spacing around `/` and
+  `&`, and common electronics acronyms retained. Case variants collapse in filters;
+  distinct descriptive subcategories are not merged by meaning.
+- Search covers textual/numeric metadata except image references. It normalizes
+  case/diacritics, supports literal partial terms, AND terms across fields and
+  bounded adjacent-transposition/insertion/deletion/substitution matching. Words
+  4–7 characters allow one edit, longer supported terms two; short/numeric terms
+  remain literal/partial. Browser and API use shared regression fixtures.
+- Category/storage filters still constrain search. Search never calls AI or reads
+  photo pixels. CSV exports metadata, inventory numbers and image references, not
+  photo bytes or complete review history.
+- Full-record updates remain last-write-wins; there is no optimistic edit locking.
+  Projects and storage are free text, not BOM/bin entities.
+
+## Photos and identification
+
+Catalog slots are front (`image`) and back (`image_back`), at most two. Uploads allow
+JPEG/PNG/WebP/HEIC up to 10 MiB each. Removing a reference or deleting a record
+retains uploaded files. Any cleanup needs explicit permission.
+
+Explicit identification accepts 1–6 JPEG/PNG/WebP views, up to 10 MiB each and
+20 MiB total. Validate the whole selection before a provider call. Additional views
+are temporary unless explicitly assigned to catalog slots; old single-file API
+requests remain supported. HEIC conversion and dedicated camera capture are planned.
+
+Use Claude first, then OpenAI if Claude is unconfigured, fails, times out or returns
+unusable output. Low confidence alone does not cause fallback. Disclose routing
+before photo submission and show provider, confidence, uncertainty, fallback reason
+and diagnostic ID. Ordinary photo storage remains local.
+
+Prefill only name/category/manufacturer/model/notes; preserve existing fields for
+empty suggestions. Require user review and an explicit save. Do not infer stock,
+storage, projects, vendors, prices or datasheet links. Validate structured output
+and lengths: name 180, category 80, manufacturer/model 120 each, notes 5000,
+uncertainty 2000. Retain complete overlong labels in notes when possible; reject
+unusable results. Field-specific save errors retain drafts and photo choices.
+
+Use configured provider keys/models from `.env` via existing Compose environment
+settings. Current defaults are `claude-sonnet-5-5` and `gpt-4.1-mini`; account/model
+availability is external. Tests mock both providers and never incur routine charges.
+
+## Similarity, comparison and review
+
+Automatic matching uses normalized models/names, electronics vocabulary, hardware
+families, fuzzy wording and resistor notation. Explicitly different sensor functions
+are separated; common support ICs such as LM393 do not identify a sensor module.
+This heuristic cannot establish compatibility or catch all duplicates.
+
+Unconfirmed similar creates/identity-changing updates return 409 with
+`detail.code=similar_components` and up to five numbered candidates. Support a
+read-only precheck excluding the edited UUID. Check before photo uploads in the UI
+and again transactionally at write. Explicit `allow_similar=true` permits a separate
+save; changed drafts require rechecking. Never merge or adjust quantities automatically.
+Stock/location-only edits do not repeat identity warnings.
+
+The portal compares two saved entries or a draft/candidate with differing fields
+highlighted and front/back photos. Saved comparisons refresh via SSE and close when
+a compared entry is deleted. Similarity links are reciprocal, include all peers,
+use stable UUID hash URLs, preserve expanded lists through refresh and remove stale
+peers. Reviewed classifications label the relationship reason. Heuristic-only
+relationship maps are cached while identities are unchanged; active review decisions
+are evaluated with current fingerprints.
+
+The AI review menu and phone-visible button select 2–8 components and review every
+selected pair. Send only inventory numbers, names, categories, manufacturers,
+models and notes to Claude, OpenAI or both independently. Disclose paid calls and
+metadata-only scope; do not send photographs, UUIDs, stock, storage or purchase data.
+There is no automatic fallback/retry, photographic re-identification or category edit.
+
+Require complete validated pair IDs, verdicts, confidence and bounded explanations.
+Show safe provider failures; if one succeeds it can still be reviewed. Store
+immutable snapshots/findings in `similarity_reviews`; list the latest 20 and retain
+older history. Allow reopening and an escaped self-contained HTML download. Reports
+record findings, not necessarily applied decisions.
+
+A separate apply action accepts checked possible-duplicate/related/different/reset
+decisions after human review. Positive classifications create reciprocal links and
+warnings; negative suppresses them; reset removes the override. Bind decisions to
+both UUIDs and fingerprints of name/category/manufacturer/model/notes. Changed
+metadata restores automatic matching; stale/deleted pairs cannot be applied. Stock
+and storage edits retain decisions. Validate every chosen pair before writing, apply
+atomically, then publish SSE. Do not edit components, photos or quantities. New
+entries are not covered by another pair's decision. Deletion cascades active decisions
+while retaining review history; database backups include both tables.
+
+## Synchronization and responsive UI
+
+Publish inventory invalidations only after committed writes and on each SSE
+connection. Reconnect with a three-second hint and send 15-second keepalives; event
+history is not persisted. Browser focus/visibility/network return refreshes data,
+reads are serialized/coalesced and failures retry. Preserve filters and unsaved
+forms/photos. Direct external SQLite edits do not notify clients.
+
+In-memory events require one Uvicorn process. Multiple workers/replicas require
+shared delivery. This is LAN synchronization, not offline editing or cloud sync.
+Physical Mac/iPhone Safari background/resume verification remains outstanding.
+
+Use safe-area spacing, visible-viewport-aware scrollable modals, readable inputs,
+touch targets and bounded content. Cards stretch equally within each grid row;
+stock/status and Compare controls align at the bottom, with related links above.
+Test long names/categories, expanded lists, phone/landscape/tablet/desktop widths,
+rotation and simulated keyboard/zoom in Chromium and WebKit. Actual iPhone camera,
+keyboard and background behavior still need device verification.
+
+## Build identification and release history — prepared, not deployed
+
+Build 1 begins explicit integer application build numbering. The packaged release
+manifest is the single source for `/api/build`, `/api/releases`, the visible footer,
+the portal release page and generated Markdown notes. It is copied by the existing
+Docker `COPY static` step; no Docker/environment/network change is needed.
+
+Display the server build on phone and desktop, link to `/release-notes`, and keep
+inventory usable if build lookup fails. Earlier source releases are labeled by Git
+commit rather than invented retrospective numbers. Build metadata contains no local
+paths, secrets, inventory or runtime environment details. Numbers advance with
+application releases; documentation-only commits and identical-source rebuilds keep
+the number. Track approval/deployment evidence separately from source release notes.
+
+## HTTP interface
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/`, `/static/*`, `/uploads/*` | Portal, packaged assets and local photos |
+| GET | `/api/docs` | Interactive FastAPI documentation |
+| GET/POST | `/api/components` | Search/list and create |
+| PUT/DELETE | `/api/components/{ident}` | Full update or delete; photo files retained |
+| POST | `/api/components/similar` | Read-only advisory save precheck |
+| GET | `/api/components/relationships`, `/api/stats`, `/api/events` | Symmetric links, statistics, SSE |
+| POST | `/api/upload`, `/api/identify` | Catalog upload and explicit photo identification |
+| GET | `/api/export.csv` | Metadata CSV |
+| GET/POST | `/api/similarity-reviews` | Latest review history and explicit paid review |
+| GET | `/api/similarity-reviews/{review_id}` | Saved immutable review |
+| POST | `/api/similarity-reviews/{review_id}/apply` | Apply checked user decisions without AI calls |
+| GET | `/api/similarity-reviews/{review_id}/report` | Download review findings as HTML |
+| GET | `/api/build`, `/api/releases`, `/release-notes` | Build 1 additions; not deployed yet |
+
+There is no `GET /api/components/{ident}` detail route; clients use the list data.
+All routes share the existing no-authentication trusted-LAN access model.
+
+## Privacy, preservation and operations
+
+Never commit keys, `.env`, databases/journals, uploads, private reports or backups.
+AI response logs in `data/logs/ai-identification.jsonl` are private and created lazily.
+Record provider/model/status/timing/response/fallback details with request/review IDs;
+redact keys and photo bytes/base64. Use owner-only files, a 2 MiB rotation limit and
+three older copies; bound long response fields. Diagnostic failure must not change
+a successful identification into fallback. Logs/private manual reports have no HTTP
+mount; explicit review/history endpoints return their stored findings.
+
+The app has no authentication/accounts. Compose exposes port 8000 on host interfaces
+for trusted LAN access. The current local URL is `http://mahdi.local:8000` if mDNS is
+available; localhost and the LAN IP also work. Do not expose it publicly. Private
+HTTPS, remote access, network/security changes and container deployment need approval.
+
+Take consistent full-data backups with the container stopped after approval; retain
+previous images, verify SQLite integrity/logical records/photo hashes and test
+restores in isolated storage. Live restore requires explicit approval and a recovery
+copy. Do not reset the database, delete uploads or overwrite uncommitted work.
+
+## Roadmap in priority order
+
+1. **SSE — implemented:** retain regression coverage; complete physical device
+   background/reconnect and unsaved-form checks.
+2. **Automated regressions — implemented:** isolated API/SSE, JavaScript and real
+   browser fixtures plus CI. Mock providers; no live inventory or paid routine tests.
+3. **iPhone camera/identification — partial:** multi-photo identification exists;
+   dedicated capture, HEIC conversion/fallback, camera errors and device checks remain.
+4. **QR — planned:** stable component/bin labels, iPhone scan/open, manual fallback
+   and explicitly confirmed quantity adjustments; scanning alone must not mutate stock.
+5. **Storage bins and BOMs — planned:** structured bins/projects, membership,
+   required/allocated/available quantities and reserve/consume/release/return semantics;
+   preserve existing free text and prevent over-allocation transactionally.
+6. **Backup/restore — planned:** an in-app full-data workflow and schedule, isolated
+   restore verification, schema/version information and approved live recovery.
+
+Keep FastAPI/SQLite/vanilla JS/Docker lightweight. Work on feature branches, add
+focused tests, run checks, keep docs/release notes consistent and obtain approval
+before deployment or destructive/security/infrastructure changes.

@@ -15,7 +15,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR
 async function fixtureServer() {
     const server = http.createServer(async (request,response) => {
         const pathname = new URL(request.url,'http://localhost').pathname;
-        const file = pathname === '/' ? path.join(root,'index.html') : path.resolve(root,'.' + pathname.replace(/^\/static/,''));
+        const file = pathname === '/' ? path.join(root,'index.html') : pathname === '/release-notes' ? path.join(root,'release-notes.html') : path.resolve(root,'.' + pathname.replace(/^\/static/,''));
         if (!file.startsWith(root + path.sep)) { response.writeHead(404).end();return; }
         try {
             const body = await fs.readFile(file);
@@ -386,6 +386,46 @@ for(const [name,engine] of Object.entries({chromium,webkit})){
                     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
                 }
             }
+        }finally{if(browser)await browser.close();await new Promise(resolve=>fixture.server.close(resolve))}
+    });
+}
+
+for(const [name,engine] of Object.entries({chromium,webkit})){
+    test(name+': build footer and release history work on phones and fail independently of inventory',async()=>{
+        const fixture=await fixtureServer();let browser;
+        try{
+            browser=await engine.launch({headless:true});const page=await browser.newPage({viewport:{width:390,height:844}});
+            const errors=[];page.on('pageerror',e=>errors.push(e.message));
+            const releases=JSON.parse(await fs.readFile(path.join(root,'release-notes.json'),'utf8'));
+            releases[0].changes.push('<script>window.releaseInjection=true</script>');
+            const number=releases[0].build_number;let buildFails=false,historyFails=false;
+            await page.route('**/api/**',route=>{
+                const path=new URL(route.request().url()).pathname;
+                if(path==='/api/build')return buildFails?route.fulfill({status:503,json:{detail:'unavailable'}}):
+                    route.fulfill({json:{build_number:number,label:'Build '+number,release_notes_url:'/release-notes'}});
+                if(path==='/api/releases')return historyFails?route.fulfill({status:503,json:{detail:'unavailable'}}):route.fulfill({json:releases});
+                if(path==='/api/events')return route.fulfill({contentType:'text/event-stream',body:'retry: 3000\n\n'});
+                return route.fulfill({json:path==='/api/components'?[component]:path==='/api/components/relationships'?{}:
+                    {types:1,units:1,low_stock:1,categories:[component.category],locations:[]}});
+            });
+            await page.goto(fixture.url);await page.locator('.component').waitFor();
+            await page.waitForFunction(n=>document.getElementById('buildInfo').textContent==='Build '+n+' · Release notes',number);
+            for(const width of [320,390,1440]){
+                await page.setViewportSize({width,height:844});await page.locator('#buildInfo').scrollIntoViewIfNeeded();
+                assert.ok(await page.locator('#buildInfo').isVisible());
+                assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+            }
+            await page.locator('#buildInfo').click();await page.locator('.release-entry').nth(releases.length-1).waitFor();
+            assert.match(await page.locator('.release-entry h2').first().innerText(),new RegExp('Build '+number));
+            assert.match(await page.locator('#releases').innerText(),/Legacy build 721e296/);
+            assert.equal(await page.evaluate(()=>window.releaseInjection),undefined);
+            await page.setViewportSize({width:320,height:844});
+            assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+            historyFails=true;await page.reload();await page.waitForFunction(()=>document.getElementById('releaseStatus').textContent.includes('unavailable'));
+            assert.ok(await page.getByRole('link',{name:'Back to inventory'}).isVisible());
+            buildFails=true;await page.goto(fixture.url);await page.locator('.component').waitFor();
+            await page.waitForFunction(()=>document.getElementById('buildInfo').textContent.includes('unavailable'));
+            assert.equal(await page.locator('#types').innerText(),'1');assert.deepEqual(errors,[]);
         }finally{if(browser)await browser.close();await new Promise(resolve=>fixture.server.close(resolve))}
     });
 }

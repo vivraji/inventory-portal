@@ -173,3 +173,11 @@ input[type=file]::file-selector-button{font:inherit;max-width:100%;min-height:44
 .component .bottom strong{min-width:0}
 .component .bottom .pill{flex:0 0 auto}
 .component .compare-choice{flex:0 0 44px}
+
+.portal-footer{margin-top:20px;text-align:center;font-size:13px}
+.portal-footer a{display:inline-block;color:#a7bbd9;min-height:44px;padding:12px;overflow-wrap:anywhere}
+.release-shell{max-width:1000px;margin:auto;padding:24px}
+.release-entry{margin:20px 0;padding:20px;border:1px solid #34435a;border-radius:12px;background:#121e31}
+.release-entry li{margin:10px 0}
+.release-entry a,.release-shell>a{color:#acc4ff}
+.release-entry h2{font-size:20px}

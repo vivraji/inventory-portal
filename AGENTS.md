@@ -1,7 +1,9 @@
 # Inventory Portal contributor instructions
 
 These instructions apply throughout this repository. Read [README.md](README.md)
-and [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) before making changes. Inspect
+and [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) before making changes. Consult
+[release notes](docs/RELEASE_NOTES.md) and [deployment history](docs/DEPLOYMENTS.md)
+when establishing what changed or what is running. Inspect
 the code to verify current behavior; planned features are not implemented features.
 
 ## Product and architecture
@@ -13,8 +15,12 @@ Compose, and persistent local storage. Prefer small additions to this architectu
 over new services or frameworks.
 
 Current entry points are `app.py` (API, validation, database access, uploads, AI),
-`static/index.html` (UI, CSS, JavaScript), and `docker-compose.yml` (runtime).
-Inventory lives in `data/inventory.db`; photographs live in `data/uploads/`.
+`static/index.html` and its `static/*.js`/`styles.css` assets (vanilla client), and
+`docker-compose.yml` (runtime). Inventory, review snapshots and pair decisions live
+in `data/inventory.db`; photographs live in `data/uploads/`. Logs and optional
+manual reports remain private under `data/`. Selected-component AI reviews send
+metadata only and require explicit human approval before pair decisions are applied.
+They do not edit component metadata or merge stock.
 
 ## Data and operational safeguards
 
@@ -38,7 +44,8 @@ Inventory lives in `data/inventory.db`; photographs live in `data/uploads/`.
 
 - Work on feature branches, with small reviewable commits and focused changes.
 - Add or update automated tests for behavior changes and run relevant checks.
-  API and SSE regression suites exist, with mocked AI and isolated storage.
+  API/SSE, JavaScript and Chromium/WebKit suites exist, with mocked AI, static
+  browser fixtures and isolated storage.
   GitHub Actions runs Python and JavaScript checks for pull requests and main.
   See README.md for isolated Python and JavaScript test commands.
   Do not report unrun checks as passing.
@@ -66,3 +73,22 @@ Follow this order unless the owner directs otherwise:
 Use the planned acceptance criteria in the project specification to scope each
 feature. Introduce regression coverage alongside SSE work even though building
 out the broader API suite is the second priority.
+
+## Build and documentation workflow
+
+- `static/release-notes.json` is the single packaged source for the running build
+  number, build API, portal release history and generated `docs/RELEASE_NOTES.md`.
+  Build 1 starts explicit numbering; earlier releases are identified by application
+  commit, not invented historical numbers.
+- Prepend the next integer for each new application release and retain prior entries.
+  Documentation-only commits and rebuilding identical source keep the number.
+  Never use the host Git checkout, environment or database to guess the runtime build.
+- Run `python3 scripts/render_release_notes.py` after manifest edits and verify
+  `python3 scripts/render_release_notes.py --check`. Do not hand-edit generated notes.
+- Keep README/specification focused on current contracts and explicit plans. Record
+  verified deployment evidence and recovery references in `docs/DEPLOYMENTS.md`.
+  Source release notes are not proof of deployment. Do not mark prepared builds as
+  running before approval and actual runtime verification.
+- Keep the build/footer accessible on phone and desktop; build lookup failures must
+  not prevent inventory from loading. Do not expose secrets, paths or inventory in
+  public build metadata. No Docker change is needed to package files already in static.

@@ -1,0 +1,119 @@
+[
+  {
+    "build_number": 1,
+    "date": "2026-11-11",
+    "title": "Build identification and documentation refresh",
+    "commit": null,
+    "changes": [
+      "Show the running application build number in a footer visible on Mac and iPhone.",
+      "Link the build label to a portal release-notes page, with matching read-only build and release-history API endpoints.",
+      "Use one packaged release manifest for the displayed build, portal history and generated Markdown release notes; no Git checkout or Docker configuration change is needed at runtime.",
+      "Refresh the README, contributor instructions and project specification to describe deployed inventory, photo identification, metadata search, AI similarity reviews and remaining plans accurately.",
+      "Document release numbering, manual backup safeguards and the verified deployment history. Inventory data, photographs and provider settings are unchanged."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Selected-component AI reviews and aligned cards",
+    "commit": "721e296",
+    "changes": [
+      "Select 2–8 components and explicitly review every selected pair with Claude, OpenAI or both independently. This workflow sends descriptive metadata, not photographs or inventory organization.",
+      "Compare verdicts, confidence, explanations and missing evidence; retain saved review snapshots and download self-contained HTML reports.",
+      "Apply checked pair classifications after human review: possible duplicate, related but distinct, different components, or return to automatic matching. Update reciprocal links and save warnings without merging records or changing stock.",
+      "Reject stale/deleted pairs atomically. Bind decisions to both UUIDs and identifying metadata; publish SSE after commit and preserve review history.",
+      "Align stock/status and Compare controls within each card row, including cards with long names and expanded related links.",
+      "Add isolated API/provider-failure and Chromium/WebKit workflow tests. The deployed feature passed 81 tests and CI."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Correct sensor similarity classification",
+    "commit": "351dc5e",
+    "changes": [
+      "Distinguish different sensing functions rather than linking modules solely because they share an LM393 or another common support IC.",
+      "Preserve exact model and same-function matches. Apply the correction consistently to reciprocal portal links and similar-save checks.",
+      "Keep every inventory record and photograph; no automatic merges or quantity adjustments."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Inventory numbers, comparison, categories and search",
+    "commit": "649a035",
+    "changes": [
+      "Assign permanent INV-000001-style inventory numbers using an additive ledger; retain UUIDs and never reuse numbers after deletion.",
+      "Show inventory numbers on cards, forms, comparisons, search and CSV exports. Compare two saved entries or an unsaved draft with a possible match.",
+      "Add advisory similar-save warnings, explicit separate-save confirmation, reciprocal related-item links and stable UUID hash links.",
+      "Normalize categories to readable Title Case with electronics acronyms preserved. Collapse case/spacing duplicates without merging distinct descriptive categories.",
+      "Search all textual/numeric metadata with partial terms, multi-field queries and bounded typo matching. Exclude uploaded image bytes and internal image paths."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Responsive mobile layout and stock default",
+    "commit": "8252d2f",
+    "changes": [
+      "Keep dashboard, forms, comparison content and notifications within the available viewport, including mobile browser chrome and simulated keyboard/zoom changes.",
+      "Add safe-area spacing, readable inputs, touch controls and Chromium/WebKit layout regression checks.",
+      "Default the low-stock threshold to 1 for new records while preserving all existing thresholds and explicit zero values."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "AI diagnostics and metadata validation",
+    "commit": "e9d2de8",
+    "changes": [
+      "Record bounded, private, rotating provider diagnostics on the Mac with request IDs, response text, status/timing and fallback reasons. Redact keys and image data.",
+      "Validate both providers against the descriptive metadata contract and inventory field lengths. Preserve complete overlong labels in notes when possible.",
+      "Prefill descriptive fields for review and show actionable field validation errors instead of a generic save failure. Retain unsaved fields and photo choices on retry."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Multi-photo identification with Claude primary",
+    "commit": "21f0c31",
+    "changes": [
+      "Identify one component from 1–6 selected JPEG/PNG/WebP views, with 10 MiB per-image and 20 MiB total limits.",
+      "Use Claude first and OpenAI as backup on request failure or unusable output, with visible provider routing. Low confidence alone does not trigger fallback.",
+      "Store at most two catalog photos, front and back, using an additive image_back migration. Keep additional identification views temporary unless selected for catalog storage.",
+      "Prefill name, category, manufacturer, model and notes for user review. Add mocked multi-photo/provider and migration coverage."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "API regression suite and CI",
+    "commit": "c474997",
+    "changes": [
+      "Add automated coverage for inventory CRUD, filters, validation, statistics, photo uploads and retention, CSV, mocked AI, persistence and SSE.",
+      "Run isolated Python and JavaScript checks in GitHub Actions on pull requests and main, without secrets or deployment credentials."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Live inventory synchronization",
+    "commit": "18282f5",
+    "changes": [
+      "Publish SSE inventory invalidations after successful commits and on connection; reconnect automatically with a three-second hint.",
+      "Refresh on browser focus, visibility and network return. Serialize/coalesce reads, retry failures and preserve filters and unsaved forms.",
+      "Keep one Uvicorn worker for in-process event delivery and verify real HTTP/SSE streams using isolated storage."
+    ]
+  },
+  {
+    "build_number": null,
+    "date": "2026-11-11",
+    "title": "Initial Inventory Portal and project context",
+    "commit": "e04aee0",
+    "changes": [
+      "Create the FastAPI/SQLite inventory portal with vanilla JavaScript/CSS, Docker Compose and persistent local inventory/photo storage.",
+      "Provide component CRUD, quantity/location/project metadata, stock statistics, photo storage, CSV export and optional OpenAI photo identification.",
+      "Establish architecture, development priorities, preservation requirements and explicit deployment approval rules in project documentation (documentation merged separately at 52a0f30)."
+    ]
+  }
+]
