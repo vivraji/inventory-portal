@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
@@ -35,6 +35,8 @@ UPLOADS = DATA / 'uploads'
 DATA.mkdir(exist_ok=True)
 UPLOADS.mkdir(exist_ok=True)
 DB = DATA / 'inventory.db'
+RELEASES = json.loads((ROOT / 'static' / 'release-notes.json').read_text())
+BUILD_NUMBER = RELEASES[0]['build_number']
 app = FastAPI(title='Inventory Portal', docs_url='/api/docs')
 app.mount('/static', StaticFiles(directory=ROOT / 'static'), name='static')
 app.mount('/uploads', StaticFiles(directory=UPLOADS), name='uploads')
@@ -429,6 +431,19 @@ def warn_if_similar(con, values, allow_similar, exclude_id=''):
 def check_similar(component: Component, exclude_id: str = ''):
     with db() as con:
         return {'matches': similar_components(con,component.model_dump(),exclude_id)}
+
+@app.get('/api/build')
+def build_info():
+    return JSONResponse({'build_number':BUILD_NUMBER,'label':f'Build {BUILD_NUMBER}',
+                         'release_notes_url':'/release-notes'},headers={'Cache-Control':'no-store'})
+
+@app.get('/api/releases')
+def release_history():
+    return JSONResponse(RELEASES,headers={'Cache-Control':'no-store'})
+
+@app.get('/release-notes')
+def release_notes_page():
+    return FileResponse(ROOT / 'static' / 'release-notes.html',headers={'Cache-Control':'no-cache'})
 
 @app.get('/')
 def home():
