@@ -342,7 +342,7 @@ private reports, environment and Docker files matched the consistent local backu
 at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
 retained as `inventory-portal-inventory:pre-sensor-matcher`.
 
-## Selected-component similarity review — implemented on feature branch; not deployed
+## Selected-component similarity review — implemented and deployed
 
 Provide a sidebar/menu action and a phone-visible AI review button. Users select
 2–8 components and explicitly submit every selected pair to Claude, OpenAI or both.
@@ -376,10 +376,25 @@ rejection, symmetric links, save prechecks, reset to automatic, selection limits
 HTML escaping, and Chromium/WebKit phone layouts. No live AI calls or deployment
 are performed during implementation. Existing LAN access and Docker settings remain.
 
-## Card alignment — implemented on feature branch; not deployed
+## Card alignment — implemented and deployed
 
 Stretch cards and their details to equal height within each responsive grid row.
 Anchor quantity/stock status and Compare controls at the bottom; render related
 links above those controls. Preserve full readable names/categories and responsive
 widths. Browser checks cover variable content and expanded relationship lists in
 Chromium and WebKit from phone to desktop widths.
+
+## Selected AI review and card alignment deployment record
+
+Merged commit `721e296` (PR #9) was deployed with owner approval on 2026-11-11
+(Pacific time). A consistent full local backup is retained at
+`backups/pre-selected-ai-review-20261112T000443Z`, with the previous Docker image
+tagged `inventory-portal-inventory:pre-selected-ai-review`. All 81 automated tests
+and PR CI passed before deployment; the built image also initialized successfully
+using offline temporary storage. Live checks passed for the review menu, history
+endpoint, static assets, inventory/relationships, SSE and `http://mahdi.local:8000`.
+Data checks confirmed preserved inventory IDs/numbers, stock, photographs, private
+reports, environment and Docker files, with SQLite integrity and foreign keys intact.
+An ordinary name edit saved through the API after startup was retained. No live AI
+calls or test inventory writes were made during deployment checks. Further
+deployments and restores require explicit owner approval.

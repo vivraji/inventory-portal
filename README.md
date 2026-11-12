@@ -402,7 +402,7 @@ private reports, environment and Docker files matched the consistent local backu
 at `backups/pre-sensor-matcher-20261111T200500Z`. The previous Docker image is
 retained as `inventory-portal-inventory:pre-sensor-matcher`.
 
-## Selected-component AI similarity reviews — feature branch; not deployed
+## Selected-component AI similarity reviews — deployed
 
 Open **AI similarity review** in the sidebar, or **AI review** at the top of the
 phone/desktop portal. Search and select 2–8 components, then choose Claude,
@@ -441,7 +441,7 @@ Reviews and decisions live in additive SQLite tables, included in full database
 backups; deleting a component removes its active pair decisions but retains review
 history. All review endpoints have the application's existing trusted-LAN-only,
 no-authentication access model. Keep private reports and database files out of Git.
-No new dependency or Docker configuration is required. Deployment requires approval.
+No new dependency or Docker configuration is required. Further deployments require approval.
 
 API routes: `POST/GET /api/similarity-reviews`,
 `GET /api/similarity-reviews/{id}`, `POST /api/similarity-reviews/{id}/apply`, and
@@ -453,10 +453,25 @@ On Mac/iPhone on the same home network, the current Mac local hostname allows
 `http://mahdi.local:8000` instead of an IP address; network Bonjour/mDNS resolution
 must be available. No network settings are changed by this feature.
 
-## Card control alignment — feature branch; not deployed
+## Card control alignment — deployed
 
 Cards stretch to the tallest content within each grid row. Stock quantity/status
 and Compare controls stay aligned at the bottom, while long names, category labels
 and expanded similarity links remain fully readable above them. The layout still
 adapts to phone widths without horizontal scrolling. Chromium and WebKit fixtures
 verify aligned controls with varying text lengths and expanded links.
+
+## Selected AI review and card alignment deployment record
+
+Merged commit `721e296` (PR #9) was deployed with owner approval on 2026-11-11
+(Pacific time). A consistent full local backup is retained at
+`backups/pre-selected-ai-review-20261112T000443Z`, with the previous Docker image
+tagged `inventory-portal-inventory:pre-selected-ai-review`. All 81 automated tests
+and PR CI passed before deployment; the built image also initialized successfully
+using offline temporary storage. Live checks passed for the review menu, history
+endpoint, static assets, inventory/relationships, SSE and `http://mahdi.local:8000`.
+Data checks confirmed preserved inventory IDs/numbers, stock, photographs, private
+reports, environment and Docker files, with SQLite integrity and foreign keys intact.
+An ordinary name edit saved through the API after startup was retained. No live AI
+calls or test inventory writes were made during deployment checks. Further
+deployments and restores require explicit owner approval.
